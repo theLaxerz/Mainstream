@@ -1,0 +1,28 @@
+.news-status {
+  margin: 0 0 0.65rem;
+  color: var(--ink-faint);
+  font-size: 0.8rem;
+}
+
+.news-row {
+  flex-wrap: wrap;
+}
+
+.news-row-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.news-footer {
+  margin-top: 0.75rem;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.news-prefs .module-row-meta {
+  white-space: normal;
+}
+
+.news-pref-form {
+  margin-bottom: 0.25rem;
+}

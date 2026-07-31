@@ -1,0 +1,63 @@
+.detail-drawer-root {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.detail-drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  background: rgba(15, 42, 51, 0.35);
+  animation: detail-fade-in 0.22s ease both;
+}
+
+.detail-drawer {
+  position: relative;
+  width: min(440px, 100%);
+  height: 100%;
+  background: var(--surface-strong);
+  border-left: 1px solid var(--line);
+  box-shadow: -18px 0 48px rgba(15, 42, 51, 0.16);
+  display: flex;
+  flex-direction: column;
+  animation: detail-slide-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.detail-drawer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1.25rem 1.25rem 0.85rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.detail-drawer-body {
+  flex: 1;
+  overflow: auto;
+  padding: 1rem 1.25rem 1.5rem;
+}
+
+@keyframes detail-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes detail-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}

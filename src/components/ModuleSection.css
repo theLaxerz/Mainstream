@@ -1,0 +1,262 @@
+.module {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  backdrop-filter: blur(14px);
+  padding: 1rem 1.1rem 1.05rem;
+  min-height: 0;
+  animation: module-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.module-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.module-eyebrow {
+  margin: 0 0 0.2rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.module-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.module-action {
+  flex-shrink: 0;
+}
+
+.module-body {
+  color: var(--ink-soft);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.module-empty {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: 0.92rem;
+}
+
+.module-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.module-list li,
+.module-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.45);
+  border: 1px solid transparent;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.module-list li:hover,
+.module-row:hover {
+  border-color: rgba(31, 122, 116, 0.22);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.module-row-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.module-row-title {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.module-row-meta {
+  margin: 0.15rem 0 0;
+  color: var(--ink-faint);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.btn-primary {
+  background: var(--teal);
+  color: white;
+}
+
+.btn-primary:hover {
+  background: #176760;
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--ink-soft);
+}
+
+.btn-ghost:hover {
+  border-color: rgba(31, 122, 116, 0.35);
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.btn-danger {
+  background: transparent;
+  border-color: rgba(178, 58, 58, 0.25);
+  color: var(--danger);
+}
+
+.btn-danger:hover {
+  background: rgba(178, 58, 58, 0.08);
+}
+
+.btn-icon {
+  padding: 0.35rem 0.55rem;
+  line-height: 1;
+}
+
+.field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.75rem;
+}
+
+.field,
+.field-select,
+.field-area {
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  border-radius: 12px;
+  padding: 0.55rem 0.7rem;
+  color: var(--ink);
+  outline: none;
+  min-width: 0;
+}
+
+.field:focus,
+.field-select:focus,
+.field-area:focus {
+  border-color: rgba(31, 122, 116, 0.45);
+  box-shadow: 0 0 0 3px var(--teal-soft);
+}
+
+.field {
+  flex: 1 1 120px;
+}
+
+.field-select {
+  flex: 0 0 auto;
+}
+
+.field-area {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  margin-bottom: 0.55rem;
+}
+
+.row-actions {
+  display: flex;
+  gap: 0.3rem;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.shortcut-open {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.finance-totals {
+  display: flex;
+  gap: 1.25rem;
+  margin-bottom: 0.85rem;
+}
+
+.finance-total {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  letter-spacing: -0.02em;
+}
+
+.finance-amount {
+  margin: 0;
+  flex-shrink: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--teal);
+  font-size: 0.92rem;
+}
+
+.finance-amount.is-neg {
+  color: var(--danger);
+}
+
+.finance-subhead {
+  margin: 0.9rem 0 0.45rem;
+}
+
+.finance-accounts-compact {
+  margin-bottom: 0.35rem;
+}
+
+.finance-bank-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.85rem;
+}
+
+@keyframes module-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

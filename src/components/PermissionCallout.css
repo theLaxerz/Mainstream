@@ -1,0 +1,32 @@
+.permission-callout {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.85rem 0.9rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(31, 122, 116, 0.18);
+}
+
+.permission-callout-title {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 650;
+  font-size: 0.95rem;
+}
+
+.permission-callout-steps {
+  margin: 0;
+  padding-left: 1.15rem;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.permission-callout-steps li + li {
+  margin-top: 0.25rem;
+}
+
+.permission-callout .btn {
+  align-self: flex-start;
+}

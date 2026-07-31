@@ -1,0 +1,22 @@
+[
+  {
+    "title": "BBC World",
+    "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+    "weight": 1.0
+  },
+  {
+    "title": "NPR News",
+    "url": "https://feeds.npr.org/1001/rss.xml",
+    "weight": 1.0
+  },
+  {
+    "title": "The Verge",
+    "url": "https://www.theverge.com/rss/index.xml",
+    "weight": 0.9
+  },
+  {
+    "title": "Hacker News",
+    "url": "https://hnrss.org/frontpage",
+    "weight": 0.85
+  }
+]

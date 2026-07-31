@@ -1,0 +1,69 @@
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650;9..144,700&family=Figtree:wght@400;500;600;700&display=swap");
+
+:root {
+  --bg-deep: #0f2a33;
+  --bg-mid: #1a4450;
+  --bg-mist: #d7e6e3;
+  --bg-foam: #f3f7f5;
+  --ink: #12262c;
+  --ink-soft: #3d5a63;
+  --ink-faint: #6d8a92;
+  --surface: rgba(243, 247, 245, 0.72);
+  --surface-strong: rgba(255, 255, 255, 0.84);
+  --line: rgba(18, 38, 44, 0.12);
+  --accent: #c9782a;
+  --accent-deep: #9a5614;
+  --teal: #1f7a74;
+  --teal-soft: rgba(31, 122, 116, 0.14);
+  --danger: #b23a3a;
+  --shadow: 0 18px 50px rgba(15, 42, 51, 0.18);
+  --radius: 18px;
+  --font-display: "Fraunces", "Iowan Old Style", "Palatino Linotype", serif;
+  --font-body: "Figtree", "Avenir Next", "Segoe UI", sans-serif;
+  color: var(--ink);
+  background: var(--bg-mist);
+  font-family: var(--font-body);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+  color: var(--ink);
+  background:
+    radial-gradient(ellipse 80% 55% at 12% 8%, rgba(201, 120, 42, 0.22), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 88% 18%, rgba(31, 122, 116, 0.28), transparent 50%),
+    radial-gradient(ellipse 90% 70% at 50% 100%, rgba(15, 42, 51, 0.18), transparent 60%),
+    linear-gradient(165deg, #eaf3f1 0%, #c9ddd8 42%, #9fbdc3 100%);
+  background-attachment: fixed;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+::selection {
+  background: rgba(201, 120, 42, 0.28);
+}
