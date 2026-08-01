@@ -46,6 +46,13 @@ IMAP host/user live in SQLite settings; passwords are stored only in the **macOS
 
 The **Mail** module searches your synced mailbox for USPS Informed Delivery digests, extracts envelope scan images, and runs **macOS Vision OCR** locally. Configure Email (IMAP) first, then use **Mail → Sync**. Scan images are cached under your app data directory.
 
+### Health, Home, YouTube, Streaming
+
+- **Health** — Import Apple Health `export.zip` / `export.xml` (steps, sleep, heart rate).
+- **Home** — Ring (refresh token) and Blink (email/password) in Keychain; lists cameras and doorbells.
+- **YouTube** — Add channel IDs; sync uses public YouTube RSS feeds.
+- **Streaming** — Free [TMDB](https://www.themoviedb.org/) API key; pick services (Prime, Apple TV+, Paramount+, Peacock, AMC+, Netflix, Max, Disney+, Hulu). **What's hot** and **New & available** lists refresh on sync.
+
 ## Layout
 
 - `src/` — React UI (dashboard, clock, module sections, detail drawers)
