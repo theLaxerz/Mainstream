@@ -2,7 +2,7 @@
 
 macOS Life OS — a local-first personal command center built with **Tauri 2 + React + TypeScript**.
 
-Clock hero, unread Messages, important email (IMAP), tailored news, local finance ledger, notes, and app/website shortcuts. Data stays on-device; the web is only used for RSS and launching shortcuts.
+Clock hero, unread Messages, important email (IMAP), **USPS Informed Delivery mail (OCR)**, tailored news, local finance ledger, notes, and app/website shortcuts. Data stays on-device; the web is only used for RSS and launching shortcuts.
 
 ## Run (dev)
 

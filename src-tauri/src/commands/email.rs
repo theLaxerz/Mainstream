@@ -68,16 +68,16 @@ pub struct EmailSyncResult {
     pub mailbox: String,
 }
 
-struct ParsedHeaders {
-    message_id: Option<String>,
-    from_addr: Option<String>,
-    from_name: Option<String>,
-    to_addrs: String,
-    subject: String,
-    preview: String,
-    date_iso: Option<String>,
-    has_list_unsubscribe: bool,
-    is_newsletter: bool,
+pub(crate) struct ParsedHeaders {
+    pub(crate) message_id: Option<String>,
+    pub(crate) from_addr: Option<String>,
+    pub(crate) from_name: Option<String>,
+    pub(crate) to_addrs: String,
+    pub(crate) subject: String,
+    pub(crate) preview: String,
+    pub(crate) date_iso: Option<String>,
+    pub(crate) has_list_unsubscribe: bool,
+    pub(crate) is_newsletter: bool,
 }
 
 fn keychain_entry(user: &str) -> Result<Entry, DbError> {
@@ -96,7 +96,7 @@ fn store_password(user: &str, password: &str) -> Result<(), DbError> {
         .map_err(|e| DbError::Message(format!("failed to store IMAP password in Keychain: {e}")))
 }
 
-fn load_password(user: &str) -> Result<Option<String>, DbError> {
+pub(crate) fn load_password(user: &str) -> Result<Option<String>, DbError> {
     match keychain_entry(user)?.get_password() {
         Ok(pw) => Ok(Some(pw)),
         Err(keyring::Error::NoEntry) => Ok(None),
@@ -116,7 +116,7 @@ fn delete_password(user: &str) -> Result<(), DbError> {
     }
 }
 
-fn read_settings(conn: &Connection) -> Result<EmailSettings, DbError> {
+pub(crate) fn read_settings(conn: &Connection) -> Result<EmailSettings, DbError> {
     let host = get_setting(conn, SETTING_HOST)?.unwrap_or_default();
     let user = get_setting(conn, SETTING_USER)?.unwrap_or_default();
     let mailbox = get_setting(conn, SETTING_MAILBOX)?.unwrap_or_else(|| "INBOX".into());
@@ -204,7 +204,7 @@ fn looks_like_promo_subject(subject: &str) -> bool {
     NEEDLES.iter().any(|n| s.contains(n))
 }
 
-fn parse_headers(raw: &[u8]) -> ParsedHeaders {
+pub(crate) fn parse_headers(raw: &[u8]) -> ParsedHeaders {
     let Ok(parsed) = parse_mail(raw) else {
         return ParsedHeaders {
             message_id: None,
@@ -305,7 +305,7 @@ fn normalize_addr(addr: &str) -> String {
 }
 
 /// Best-effort contact signals from Messages `handle.id` values.
-fn load_known_contacts() -> HashSet<String> {
+pub(crate) fn load_known_contacts() -> HashSet<String> {
     let mut out = HashSet::new();
     let Some(home) = dirs_home() else {
         return out;
@@ -339,7 +339,7 @@ fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
-fn score_importance(
+pub(crate) fn score_importance(
     headers: &ParsedHeaders,
     user_email: &str,
     known: &HashSet<String>,
@@ -401,7 +401,7 @@ fn score_importance(
     (important, score, false)
 }
 
-fn upsert_email(
+pub(crate) fn upsert_email(
     conn: &Connection,
     uid: u32,
     mailbox: &str,

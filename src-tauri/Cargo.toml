@@ -28,3 +28,4 @@ native-tls = "0.2"
 mailparse = "0.15"
 keyring = { version = "3", features = ["apple-native"] }
 urlencoding = "2"
+base64 = "0.22"

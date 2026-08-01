@@ -90,3 +90,20 @@ export type EmailSyncResult = {
   important: number;
   mailbox: string;
 };
+
+export type PhysicalMailPiece = {
+  id: number;
+  emailId: number;
+  digestDate: string | null;
+  pieceIndex: number;
+  ocrText: string;
+  imagePath: string | null;
+  subject: string;
+  syncedAt: string;
+};
+
+export type PhysicalMailSyncResult = {
+  digests: number;
+  pieces: number;
+  ocrRan: number;
+};

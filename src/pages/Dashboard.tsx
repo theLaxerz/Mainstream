@@ -1,5 +1,6 @@
 import { Clock } from "../components/Clock";
 import { EmailSection } from "../components/EmailSection";
+import { MailSection } from "../components/MailSection";
 import { FinanceSection } from "../components/FinanceSection";
 import { MessagesSection } from "../components/MessagesSection";
 import { NewsSection } from "../components/NewsSection";
@@ -27,6 +28,7 @@ export function Dashboard() {
       <div className="dashboard-grid">
         <MessagesSection />
         <EmailSection />
+        <MailSection />
         <NewsSection />
         <FinanceSection />
         <NotesSection />

@@ -3,6 +3,8 @@ import type {
   EmailMessage,
   EmailSettings,
   EmailSyncResult,
+  PhysicalMailPiece,
+  PhysicalMailSyncResult,
   NewsFeedbackAction,
   NewsItem,
   NewsPref,
@@ -146,6 +148,22 @@ export async function listAllImportantEmails(): Promise<EmailMessage[]> {
 
 export async function openEmail(id: number): Promise<void> {
   return invoke("open_email", { id });
+}
+
+export async function syncPhysicalMail(): Promise<PhysicalMailSyncResult> {
+  return invoke("sync_physical_mail");
+}
+
+export async function listPhysicalMail(
+  limit?: number,
+): Promise<PhysicalMailPiece[]> {
+  return invoke("list_physical_mail", { limit: limit ?? null });
+}
+
+export async function physicalMailImageBase64(
+  id: number,
+): Promise<string | null> {
+  return invoke("physical_mail_image_base64", { id });
 }
 
 export async function seedDefaultNewsFeeds(): Promise<number> {

@@ -44,7 +44,6 @@ impl Db {
         Ok(db)
     }
 
-    #[allow(dead_code)]
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -164,6 +163,20 @@ impl Db {
             CREATE INDEX IF NOT EXISTS idx_emails_important
                 ON emails(is_important DESC, importance_score DESC, date_iso DESC);
             CREATE INDEX IF NOT EXISTS idx_emails_unread ON emails(is_unread DESC, date_iso DESC);
+
+            CREATE TABLE IF NOT EXISTS mail_pieces (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email_id INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+                digest_date TEXT,
+                piece_index INTEGER NOT NULL DEFAULT 0,
+                ocr_text TEXT NOT NULL DEFAULT '',
+                image_path TEXT,
+                subject TEXT NOT NULL DEFAULT '',
+                synced_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_mail_pieces_synced
+                ON mail_pieces(synced_at DESC, digest_date DESC);
             "#,
         )?;
         Self::ensure_column(

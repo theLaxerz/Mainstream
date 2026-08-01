@@ -1,0 +1,50 @@
+.mail-list .mail-row {
+  align-items: center;
+}
+
+.mail-thumb {
+  width: 52px;
+  height: 52px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.mail-thumb-empty {
+  background: linear-gradient(
+    135deg,
+    rgba(31, 122, 116, 0.12),
+    rgba(201, 120, 42, 0.1)
+  );
+}
+
+.mail-detail-thumb {
+  margin-bottom: 1rem;
+}
+
+.mail-detail-thumb .mail-thumb {
+  width: 100%;
+  max-width: 280px;
+  height: auto;
+  aspect-ratio: 4 / 3;
+}
+
+.mail-ocr-body {
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid var(--line);
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ink);
+}
+
+.mail-row .module-row-meta {
+  white-space: normal;
+}

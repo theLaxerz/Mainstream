@@ -218,6 +218,7 @@ export function EmailSection() {
 
   return (
     <>
+      <div data-module="email">
       <ModuleSection
         title="Email"
         eyebrow="Important"
@@ -280,6 +281,7 @@ export function EmailSection() {
 
         {configured ? emailRows(top) : null}
       </ModuleSection>
+      </div>
 
       <DetailDrawer
         open={showAll}
