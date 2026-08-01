@@ -3,9 +3,14 @@ import { getSetting, setSetting } from "./api";
 export const MODULE_IDS = [
   "messages",
   "email",
+  "mail",
   "news",
   "finance",
   "notes",
+  "health",
+  "home",
+  "youtube",
+  "streaming",
   "shortcuts",
 ] as const;
 
@@ -30,18 +35,28 @@ const SETTING_KEY = "dashboard.layout.v1";
 export const DEFAULT_MODULE_LIMITS: Record<ModuleId, number> = {
   messages: 10,
   email: 10,
+  mail: 12,
   news: 8,
   finance: 5,
   notes: 10,
+  health: 7,
+  home: 8,
+  youtube: 10,
+  streaming: 8,
   shortcuts: 12,
 };
 
 const DEFAULT_ORDER: ModuleId[] = [
   "messages",
   "email",
+  "mail",
   "news",
   "finance",
   "notes",
+  "health",
+  "home",
+  "youtube",
+  "streaming",
   "shortcuts",
 ];
 

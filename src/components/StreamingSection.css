@@ -1,0 +1,38 @@
+.streaming-row {
+  align-items: center;
+}
+
+.streaming-poster {
+  width: 44px;
+  height: 66px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+}
+
+.streaming-poster-empty {
+  background: rgba(15, 42, 51, 0.08);
+}
+
+.streaming-provider-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.5rem 0 0.85rem;
+}
+
+.streaming-provider-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.module-streaming .module-row-meta {
+  white-space: normal;
+}

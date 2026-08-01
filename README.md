@@ -2,7 +2,7 @@
 
 macOS Life OS — a local-first personal command center built with **Tauri 2 + React + TypeScript**.
 
-Clock hero, unread Messages, important email (IMAP), **USPS Informed Delivery mail (OCR)**, tailored news, local finance ledger, notes, and app/website shortcuts. Data stays on-device; the web is only used for RSS and launching shortcuts.
+Clock hero, unread Messages, important email (IMAP), USPS Informed Delivery mail (OCR), tailored news, local finance ledger, notes, **Health** (Apple Health export), **Home** (Ring & Blink), **YouTube** (channel RSS), **Streaming** (what's hot / new via TMDB), and app/website shortcuts. Data stays on-device; the web is only used for RSS and launching shortcuts.
 
 ## Run (dev)
 
@@ -41,6 +41,10 @@ There is no entitlement that grants FDA — it is a user TCC grant. The app deep
 ### Email (IMAP)
 
 IMAP host/user live in SQLite settings; passwords are stored only in the **macOS Keychain**. Use an app-specific password for iCloud or Gmail.
+
+### Physical mail (Informed Delivery)
+
+The **Mail** module searches your synced mailbox for USPS Informed Delivery digests, extracts envelope scan images, and runs **macOS Vision OCR** locally. Configure Email (IMAP) first, then use **Mail → Sync**. Scan images are cached under your app data directory.
 
 ## Layout
 

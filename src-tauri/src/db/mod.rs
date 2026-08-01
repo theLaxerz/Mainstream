@@ -177,6 +177,54 @@ impl Db {
 
             CREATE INDEX IF NOT EXISTS idx_mail_pieces_synced
                 ON mail_pieces(synced_at DESC, digest_date DESC);
+
+            CREATE TABLE IF NOT EXISTS health_daily (
+                day TEXT PRIMARY KEY,
+                steps INTEGER NOT NULL DEFAULT 0,
+                sleep_minutes INTEGER NOT NULL DEFAULT 0,
+                avg_heart_rate REAL,
+                imported_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS youtube_prefs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel_id TEXT NOT NULL UNIQUE,
+                title TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1
+            );
+
+            CREATE TABLE IF NOT EXISTS youtube_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                video_id TEXT NOT NULL UNIQUE,
+                channel_id TEXT NOT NULL,
+                channel_title TEXT,
+                title TEXT NOT NULL,
+                url TEXT NOT NULL,
+                published_at TEXT,
+                fetched_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_youtube_items_pub
+                ON youtube_items(published_at DESC);
+
+            CREATE TABLE IF NOT EXISTS streaming_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider_id TEXT NOT NULL,
+                provider_name TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK (kind IN ('hot', 'new')),
+                tmdb_id INTEGER NOT NULL,
+                media_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                overview TEXT,
+                poster_path TEXT,
+                release_date TEXT,
+                score REAL NOT NULL DEFAULT 0,
+                fetched_at TEXT NOT NULL,
+                UNIQUE(provider_id, kind, tmdb_id, media_type)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_streaming_items
+                ON streaming_items(provider_id, kind, score DESC);
             "#,
         )?;
         Self::ensure_column(

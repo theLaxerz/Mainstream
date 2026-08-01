@@ -107,3 +107,79 @@ export type PhysicalMailSyncResult = {
   pieces: number;
   ocrRan: number;
 };
+
+export type HealthDay = {
+  day: string;
+  steps: number;
+  sleepMinutes: number;
+  avgHeartRate: number | null;
+  importedAt: string;
+};
+
+export type HealthSettings = {
+  exportPath: string;
+};
+
+export type HealthImportResult = {
+  daysUpdated: number;
+  exportPath: string;
+};
+
+export type HomeDevice = {
+  id: string;
+  name: string;
+  vendor: string;
+  deviceType: string;
+  status: string;
+  detail: string | null;
+};
+
+export type HomeSettings = {
+  ringConnected: boolean;
+  blinkConnected: boolean;
+  blinkDeviceUid: string;
+};
+
+export type YoutubePref = {
+  id: number;
+  channelId: string;
+  title: string | null;
+  enabled: boolean;
+};
+
+export type YoutubeItem = {
+  id: number;
+  videoId: string;
+  channelId: string;
+  channelTitle: string | null;
+  title: string;
+  url: string;
+  publishedAt: string | null;
+  fetchedAt: string;
+};
+
+export type StreamingProvider = {
+  id: string;
+  name: string;
+  tmdbProviderId: number;
+};
+
+export type StreamingItem = {
+  id: number;
+  providerId: string;
+  providerName: string;
+  kind: string;
+  tmdbId: number;
+  mediaType: string;
+  title: string;
+  overview: string | null;
+  posterPath: string | null;
+  releaseDate: string | null;
+  score: number;
+  fetchedAt: string;
+};
+
+export type StreamingSettings = {
+  hasApiKey: boolean;
+  enabledProviders: string[];
+};

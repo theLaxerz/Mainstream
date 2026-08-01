@@ -5,6 +5,16 @@ import type {
   EmailSyncResult,
   PhysicalMailPiece,
   PhysicalMailSyncResult,
+  HealthDay,
+  HealthSettings,
+  HealthImportResult,
+  HomeDevice,
+  HomeSettings,
+  YoutubeItem,
+  YoutubePref,
+  StreamingItem,
+  StreamingProvider,
+  StreamingSettings,
   NewsFeedbackAction,
   NewsItem,
   NewsPref,
@@ -201,4 +211,111 @@ export async function rerankNews(): Promise<number> {
 
 export async function getNewsLastRefresh(): Promise<string | null> {
   return invoke("get_news_last_refresh");
+}
+
+export async function getHealthSettings(): Promise<HealthSettings> {
+  return invoke("get_health_settings");
+}
+
+export async function saveHealthSettings(exportPath: string): Promise<HealthSettings> {
+  return invoke("save_health_settings", { exportPath });
+}
+
+export async function importHealthExport(path?: string): Promise<HealthImportResult> {
+  return invoke("import_health_export", { path: path ?? null });
+}
+
+export async function listHealthDays(limit?: number): Promise<HealthDay[]> {
+  return invoke("list_health_days", { limit: limit ?? null });
+}
+
+export async function healthTodaySummary(): Promise<HealthDay | null> {
+  return invoke("health_today_summary");
+}
+
+export async function getHomeSettings(): Promise<HomeSettings> {
+  return invoke("get_home_settings");
+}
+
+export async function saveHomeCredentials(input: {
+  ringRefreshToken?: string;
+  blinkEmail?: string;
+  blinkPassword?: string;
+  blinkDeviceUid?: string;
+}): Promise<HomeSettings> {
+  return invoke("save_home_credentials", { input });
+}
+
+export async function listHomeDevices(): Promise<HomeDevice[]> {
+  return invoke("list_home_devices");
+}
+
+export async function listYoutubePrefs(): Promise<YoutubePref[]> {
+  return invoke("list_youtube_prefs");
+}
+
+export async function upsertYoutubePref(input: {
+  channelId: string;
+  title?: string | null;
+  enabled?: boolean;
+}): Promise<YoutubePref> {
+  return invoke("upsert_youtube_pref", { input });
+}
+
+export async function deleteYoutubePref(id: number): Promise<void> {
+  return invoke("delete_youtube_pref", { id });
+}
+
+export async function refreshYoutube(): Promise<{
+  channels: number;
+  upserted: number;
+  errors: string[];
+}> {
+  return invoke("refresh_youtube");
+}
+
+export async function listYoutubeItems(limit?: number): Promise<YoutubeItem[]> {
+  return invoke("list_youtube_items", { limit: limit ?? null });
+}
+
+export async function openYoutubeItem(id: number): Promise<void> {
+  return invoke("open_youtube_item", { id });
+}
+
+export async function listStreamingProviders(): Promise<StreamingProvider[]> {
+  return invoke("list_streaming_providers");
+}
+
+export async function getStreamingSettings(): Promise<StreamingSettings> {
+  return invoke("get_streaming_settings");
+}
+
+export async function saveStreamingSettings(input: {
+  apiKey?: string;
+  enabledProviders?: string[];
+}): Promise<StreamingSettings> {
+  return invoke("save_streaming_settings", {
+    apiKey: input.apiKey ?? null,
+    enabledProviders: input.enabledProviders ?? null,
+  });
+}
+
+export async function refreshStreaming(): Promise<{
+  providers: number;
+  upserted: number;
+  errors: string[];
+}> {
+  return invoke("refresh_streaming");
+}
+
+export async function listStreamingHot(limit?: number): Promise<StreamingItem[]> {
+  return invoke("list_streaming_hot", { limit: limit ?? null });
+}
+
+export async function listStreamingNew(limit?: number): Promise<StreamingItem[]> {
+  return invoke("list_streaming_new", { limit: limit ?? null });
+}
+
+export async function openStreamingItem(id: number): Promise<void> {
+  return invoke("open_streaming_item", { id });
 }
