@@ -2,30 +2,37 @@ import { useEffect, useState } from "react";
 import {
   formatMessageTime,
   listAllUnreadMessages,
-  listUnreadMessages,
   openFullDiskAccessSettings,
   openMessageConversation,
   type UnreadMessage,
 } from "../lib/messages";
+import {
+  groupPreviewLabel,
+  groupUnreadByChat,
+  type GroupedUnreadMessage,
+} from "../lib/messageGroups";
 import { onDashboardRefresh } from "../lib/refresh";
 import { DetailDrawer } from "./DetailDrawer";
 import { ModuleSection } from "./ModuleSection";
 import { PermissionCallout } from "./PermissionCallout";
 
+const TOP_COUNT = 10;
+
 export function MessagesSection() {
-  const [messages, setMessages] = useState<UnreadMessage[]>([]);
-  const [allMessages, setAllMessages] = useState<UnreadMessage[]>([]);
+  const [groups, setGroups] = useState<GroupedUnreadMessage[]>([]);
   const [accessStatus, setAccessStatus] = useState<string | null>(null);
   const [accessDetail, setAccessDetail] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerLoading, setDrawerLoading] = useState(false);
 
   async function refresh() {
     try {
-      const result = await listUnreadMessages(10);
-      setMessages(result.messages);
+      // Fetch every unread row and group by conversation client-side so a
+      // busy group chat (many individual replies) doesn't crowd out other
+      // conversations — each chat collapses to one row with an unread count.
+      const result = await listAllUnreadMessages();
+      setGroups(groupUnreadByChat(result.messages));
       setAccessStatus(result.access.status);
       setAccessDetail(result.access.detail);
       setError(null);
@@ -41,22 +48,6 @@ export function MessagesSection() {
     return onDashboardRefresh(() => void refresh());
   }, []);
 
-  async function openAll() {
-    setDrawerOpen(true);
-    setDrawerLoading(true);
-    try {
-      const result = await listAllUnreadMessages();
-      setAllMessages(result.messages);
-      setAccessStatus(result.access.status);
-      setAccessDetail(result.access.detail);
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setDrawerLoading(false);
-    }
-  }
-
   async function onOpenConversation(msg: UnreadMessage) {
     try {
       await openMessageConversation(msg.chatIdentifier, msg.chatGuid);
@@ -68,19 +59,24 @@ export function MessagesSection() {
   const needsPermission = accessStatus === "needs_permission";
   const unavailable = accessStatus === "unavailable";
 
-  function messageRows(rows: UnreadMessage[]) {
+  function messageRows(rows: GroupedUnreadMessage[]) {
     return (
       <ul className="module-list">
         {rows.map((msg) => (
-          <li key={msg.messageId}>
+          <li key={msg.chatGuid || msg.chatIdentifier || msg.chatId}>
             <button
               type="button"
               className="module-row-main shortcut-open"
               onClick={() => void onOpenConversation(msg)}
             >
-              <p className="module-row-title">{msg.displayName}</p>
+              <p className="module-row-title">
+                {msg.displayName}
+                {msg.unreadCount > 1 ? (
+                  <span className="module-row-badge">{msg.unreadCount}</span>
+                ) : null}
+              </p>
               <p className="module-row-meta">
-                {msg.text} · {formatMessageTime(msg.date)}
+                {groupPreviewLabel(msg)} · {formatMessageTime(msg.date)}
               </p>
             </button>
           </li>
@@ -103,11 +99,11 @@ export function MessagesSection() {
             >
               Refresh
             </button>
-            {!needsPermission && !unavailable ? (
+            {!needsPermission && !unavailable && groups.length > TOP_COUNT ? (
               <button
                 type="button"
                 className="btn btn-ghost"
-                onClick={() => void openAll()}
+                onClick={() => setDrawerOpen(true)}
               >
                 All
               </button>
@@ -142,11 +138,13 @@ export function MessagesSection() {
         {error ? <p className="module-empty">{error}</p> : null}
         {loading ? <p className="module-empty">Loading messages…</p> : null}
 
-        {!loading && !needsPermission && !unavailable && messages.length === 0 ? (
+        {!loading && !needsPermission && !unavailable && groups.length === 0 ? (
           <p className="module-empty">No unread messages.</p>
         ) : null}
 
-        {!needsPermission && !unavailable ? messageRows(messages) : null}
+        {!needsPermission && !unavailable
+          ? messageRows(groups.slice(0, TOP_COUNT))
+          : null}
       </ModuleSection>
 
       <DetailDrawer
@@ -155,12 +153,10 @@ export function MessagesSection() {
         eyebrow="Unread"
         onClose={() => setDrawerOpen(false)}
       >
-        {drawerLoading ? (
-          <p className="module-empty">Loading…</p>
-        ) : allMessages.length === 0 ? (
+        {groups.length === 0 ? (
           <p className="module-empty">No unread messages.</p>
         ) : (
-          messageRows(allMessages)
+          messageRows(groups)
         )}
       </DetailDrawer>
     </>

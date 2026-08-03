@@ -8,11 +8,23 @@ import {
   syncEmail,
 } from "../lib/api";
 import { emailSenderLabel, formatEmailDate } from "../lib/email";
+import {
+  EMAIL_CONNECTORS,
+  getEmailConnector,
+  type EmailConnectorId,
+} from "../lib/emailConnectors";
 import { onDashboardRefresh } from "../lib/refresh";
 import type { EmailMessage, EmailSettings } from "../lib/types";
 import { DetailDrawer } from "./DetailDrawer";
 import { ModuleSection } from "./ModuleSection";
 import { PermissionCallout } from "./PermissionCallout";
+
+function connectorIdForHost(host: string): EmailConnectorId {
+  const match = EMAIL_CONNECTORS.find(
+    (c) => c.host && c.host.toLowerCase() === host.trim().toLowerCase(),
+  );
+  return match?.id ?? "custom";
+}
 
 export function EmailSection() {
   const [top, setTop] = useState<EmailMessage[]>([]);
@@ -20,6 +32,7 @@ export function EmailSection() {
   const [showAll, setShowAll] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<EmailSettings | null>(null);
+  const [connectorId, setConnectorId] = useState<EmailConnectorId>("icloud");
   const [host, setHost] = useState("");
   const [port, setPort] = useState("993");
   const [user, setUser] = useState("");
@@ -38,9 +51,19 @@ export function EmailSection() {
     setPort(String(s.port || 993));
     setUser(s.user);
     setMailbox(s.mailbox || "INBOX");
+    setConnectorId(s.host ? connectorIdForHost(s.host) : "icloud");
     if (!s.host || !s.user || !s.hasPassword) {
       setShowSettings(true);
     }
+  }
+
+  function onPickConnector(id: EmailConnectorId) {
+    setConnectorId(id);
+    if (id === "custom") return;
+    const connector = getEmailConnector(id);
+    setHost(connector.host);
+    setPort(String(connector.port));
+    setMailbox(connector.mailbox);
   }
 
   async function loadLists() {
@@ -122,27 +145,62 @@ export function EmailSection() {
   );
 
   function settingsForm() {
+    const connector = getEmailConnector(connectorId);
+    const isCustom = connectorId === "custom";
     return (
       <form className="notes-form" onSubmit={onSaveSettings}>
-        <div className="field-row">
-          <input
-            className="field"
-            value={host}
-            onChange={(e) => setHost(e.target.value)}
-            placeholder="IMAP host (e.g. imap.mail.me.com)"
-            aria-label="IMAP host"
-            autoComplete="off"
-          />
-          <input
-            className="field"
-            style={{ flex: "0 0 5.5rem" }}
-            value={port}
-            onChange={(e) => setPort(e.target.value)}
-            placeholder="993"
-            aria-label="IMAP port"
-            inputMode="numeric"
-          />
+        <div className="email-connector-picker">
+          {EMAIL_CONNECTORS.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              className={
+                "email-connector-chip" +
+                (c.id === connectorId ? " is-selected" : "")
+              }
+              onClick={() => onPickConnector(c.id)}
+              title={c.description}
+            >
+              {c.name}
+            </button>
+          ))}
         </div>
+
+        {connector.setupHint ? (
+          <p className="email-connector-hint">
+            {connector.setupHint}
+            {connector.helpUrl ? (
+              <>
+                {" "}
+                <a href={connector.helpUrl} target="_blank" rel="noreferrer">
+                  Learn more
+                </a>
+              </>
+            ) : null}
+          </p>
+        ) : null}
+
+        {isCustom ? (
+          <div className="field-row">
+            <input
+              className="field"
+              value={host}
+              onChange={(e) => setHost(e.target.value)}
+              placeholder="IMAP host (e.g. imap.mail.me.com)"
+              aria-label="IMAP host"
+              autoComplete="off"
+            />
+            <input
+              className="field"
+              style={{ flex: "0 0 5.5rem" }}
+              value={port}
+              onChange={(e) => setPort(e.target.value)}
+              placeholder="993"
+              aria-label="IMAP port"
+              inputMode="numeric"
+            />
+          </div>
+        ) : null}
         <div className="field-row">
           <input
             className="field"

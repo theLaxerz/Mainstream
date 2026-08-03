@@ -101,6 +101,23 @@
   text-overflow: ellipsis;
 }
 
+.module-row-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  margin-left: 0.4rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--teal);
+  color: white;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: middle;
+}
+
 .btn {
   border: 1px solid transparent;
   border-radius: 999px;
@@ -248,6 +265,49 @@
   flex-wrap: wrap;
   gap: 0.35rem;
   margin-top: 0.85rem;
+}
+
+.email-connector-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.email-connector-chip {
+  appearance: none;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  color: var(--ink-soft);
+  border-radius: 999px;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.email-connector-chip:hover {
+  border-color: rgba(31, 122, 116, 0.35);
+  color: var(--ink);
+}
+
+.email-connector-chip.is-selected {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: white;
+}
+
+.email-connector-hint {
+  margin: 0 0 0.75rem;
+  color: var(--ink-faint);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.email-connector-hint a {
+  color: var(--teal);
+  font-weight: 600;
 }
 
 @keyframes module-in {
