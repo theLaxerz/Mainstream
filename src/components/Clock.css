@@ -8,7 +8,7 @@
 
 .clock-face {
   position: relative;
-  width: min(42vw, 280px);
+  width: min(36vw, 240px);
   aspect-ratio: 1;
   border-radius: 50%;
   background:
