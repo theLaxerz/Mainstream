@@ -14,7 +14,9 @@ import { DetailDrawer } from "./DetailDrawer";
 import { ModuleSection } from "./ModuleSection";
 import "./StreamingSection.css";
 
-export function StreamingSection() {
+type Props = { limit?: number };
+
+export function StreamingSection({ limit = 8 }: Props) {
   const [hot, setHot] = useState<StreamingItem[]>([]);
   const [fresh, setFresh] = useState<StreamingItem[]>([]);
   const [providers, setProviders] = useState<StreamingProvider[]>([]);
@@ -29,8 +31,8 @@ export function StreamingSection() {
 
   async function loadLists() {
     const [hotRows, newRows] = await Promise.all([
-      listStreamingHot(8),
-      listStreamingNew(8),
+      listStreamingHot(limit),
+      listStreamingNew(limit),
     ]);
     setHot(hotRows);
     setFresh(newRows);
@@ -65,7 +67,8 @@ export function StreamingSection() {
   useEffect(() => {
     void refresh();
     return onDashboardRefresh(() => void refresh({ sync: true }));
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [limit]);
 
   function toggleProvider(id: string) {
     setEnabled((prev) =>
@@ -131,8 +134,8 @@ export function StreamingSection() {
             </button>
           </div>
         }
-        style={{ animationDelay: "0.2s" }}
         className="module-streaming"
+        count={!loading ? hot.length + fresh.length : null}
       >
         {!hasKey ? (
           <p className="module-empty">

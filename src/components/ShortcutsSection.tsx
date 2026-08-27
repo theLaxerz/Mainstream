@@ -10,7 +10,9 @@ import type { Shortcut, ShortcutKind } from "../lib/types";
 import { DetailDrawer } from "./DetailDrawer";
 import { ModuleSection } from "./ModuleSection";
 
-export function ShortcutsSection() {
+type Props = { limit?: number };
+
+export function ShortcutsSection({ limit = 12 }: Props) {
   const [shortcuts, setShortcuts] = useState<Shortcut[]>([]);
   const [label, setLabel] = useState("");
   const [kind, setKind] = useState<ShortcutKind>("url");
@@ -94,7 +96,7 @@ export function ShortcutsSection() {
             </button>
           </div>
         }
-        style={{ animationDelay: "0.24s" }}
+        count={!loading ? shortcuts.length : null}
       >
         {error && !manageOpen ? <p className="module-empty">{error}</p> : null}
         {loading ? <p className="module-empty">Loading shortcuts…</p> : null}
@@ -105,7 +107,7 @@ export function ShortcutsSection() {
         ) : null}
 
         <ul className="module-list">
-          {shortcuts.map((item) => (
+          {shortcuts.slice(0, limit).map((item) => (
             <li key={item.id}>
               <button
                 type="button"

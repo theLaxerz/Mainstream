@@ -9,7 +9,9 @@ import type { HomeDevice } from "../lib/types";
 import { DetailDrawer } from "./DetailDrawer";
 import { ModuleSection } from "./ModuleSection";
 
-export function HomeSection() {
+type Props = { limit?: number };
+
+export function HomeSection({ limit = 8 }: Props) {
   const [devices, setDevices] = useState<HomeDevice[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,7 +77,7 @@ export function HomeSection() {
             </button>
           </div>
         }
-        style={{ animationDelay: "0.16s" }}
+        count={!loading ? devices.length : null}
       >
         {error ? <p className="module-empty">{error}</p> : null}
         {loading ? <p className="module-empty">Loading devices…</p> : null}
@@ -86,7 +88,7 @@ export function HomeSection() {
           </p>
         ) : null}
         <ul className="module-list">
-          {devices.map((d) => (
+          {devices.slice(0, limit).map((d) => (
             <li key={d.id}>
               <div className="module-row-main">
                 <p className="module-row-title">{d.name}</p>

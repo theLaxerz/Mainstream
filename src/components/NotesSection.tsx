@@ -18,7 +18,9 @@ function formatUpdated(iso: string) {
   }
 }
 
-export function NotesSection() {
+type Props = { limit?: number };
+
+export function NotesSection({ limit = 10 }: Props) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [allNotes, setAllNotes] = useState<Note[]>([]);
   const [title, setTitle] = useState("");
@@ -31,7 +33,7 @@ export function NotesSection() {
 
   async function refresh() {
     try {
-      const rows = await listNotes(10);
+      const rows = await listNotes(limit);
       setNotes(rows);
       setError(null);
     } catch (e) {
@@ -44,7 +46,8 @@ export function NotesSection() {
   useEffect(() => {
     void refresh();
     return onDashboardRefresh(() => void refresh());
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [limit]);
 
   function resetForm() {
     setTitle("");
@@ -166,7 +169,7 @@ export function NotesSection() {
             </button>
           </div>
         }
-        style={{ animationDelay: "0.18s" }}
+        count={!loading ? notes.length : null}
       >
         <form className="notes-form" onSubmit={onSubmit}>
           <div className="field-row">

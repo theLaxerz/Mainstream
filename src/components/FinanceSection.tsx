@@ -30,7 +30,9 @@ const ACCOUNT_KINDS: AccountKind[] = [
   "other",
 ];
 
-export function FinanceSection() {
+type Props = { limit?: number };
+
+export function FinanceSection({ limit = 10 }: Props) {
   const [summary, setSummary] = useState<FinanceSummary | null>(null);
   const [transactions, setTransactions] = useState<TransactionView[]>([]);
   const [manageOpen, setManageOpen] = useState(false);
@@ -200,7 +202,8 @@ export function FinanceSection() {
             </button>
           </div>
         }
-        style={{ animationDelay: "0.2s" }}
+        count={!loading ? transactions.length : null}
+        accent="accent"
       >
         {error && !manageOpen ? <p className="module-empty">{error}</p> : null}
         {status && !manageOpen ? <p className="module-empty">{status}</p> : null}
@@ -250,7 +253,7 @@ export function FinanceSection() {
               <p className="module-empty">No transactions yet.</p>
             ) : (
               <ul className="module-list">
-                {transactions.map((txn) => (
+                {transactions.slice(0, limit).map((txn) => (
                   <li key={txn.id}>
                     <div className="module-row-main">
                       <p className="module-row-title">

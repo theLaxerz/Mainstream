@@ -1,0 +1,120 @@
+.layout-lead {
+  margin: 0 0 1rem;
+  color: var(--ink-soft);
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.layout-saving {
+  margin: 0 0 0.75rem;
+  color: var(--teal);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.layout-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.layout-item {
+  padding: 0.85rem 0.9rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid var(--line);
+  transition: opacity 0.2s ease, border-color 0.2s ease;
+}
+
+.layout-item.is-disabled {
+  opacity: 0.55;
+}
+
+.layout-item-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.layout-toggle {
+  display: flex;
+  gap: 0.65rem;
+  align-items: flex-start;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.layout-toggle input {
+  margin-top: 0.3rem;
+  accent-color: var(--teal);
+}
+
+.layout-toggle strong {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  color: var(--ink);
+}
+
+.layout-toggle small {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--ink-faint);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.layout-move {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.layout-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.55rem;
+  margin-top: 0.75rem;
+}
+
+.layout-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.layout-field .field,
+.layout-field .field-select {
+  width: 100%;
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink);
+}
+
+.layout-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.layout-hint {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: 0.78rem;
+  font-weight: 600;
+}

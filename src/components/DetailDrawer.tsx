@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import "./DetailDrawer.css";
 
 type Props = {
@@ -8,6 +8,7 @@ type Props = {
   onClose: () => void;
   children: ReactNode;
   label?: string;
+  wide?: boolean;
 };
 
 export function DetailDrawer({
@@ -17,7 +18,22 @@ export function DetailDrawer({
   onClose,
   children,
   label,
+  wide,
 }: Props) {
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open, onClose]);
+
   if (!open) return null;
 
   return (
@@ -33,7 +49,7 @@ export function DetailDrawer({
         aria-label="Close"
         onClick={onClose}
       />
-      <aside className="detail-drawer">
+      <aside className={`detail-drawer ${wide ? "is-wide" : ""}`}>
         <header className="detail-drawer-header">
           <div>
             {eyebrow ? <p className="module-eyebrow">{eyebrow}</p> : null}

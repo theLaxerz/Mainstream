@@ -26,7 +26,9 @@ function connectorIdForHost(host: string): EmailConnectorId {
   return match?.id ?? "custom";
 }
 
-export function EmailSection() {
+type Props = { limit?: number };
+
+export function EmailSection({ limit = 10 }: Props) {
   const [top, setTop] = useState<EmailMessage[]>([]);
   const [all, setAll] = useState<EmailMessage[]>([]);
   const [showAll, setShowAll] = useState(false);
@@ -68,7 +70,7 @@ export function EmailSection() {
 
   async function loadLists() {
     const [topRows, allRows] = await Promise.all([
-      listImportantEmails(10),
+      listImportantEmails(limit),
       listAllImportantEmails(),
     ]);
     setTop(topRows);
@@ -99,7 +101,8 @@ export function EmailSection() {
   useEffect(() => {
     void refresh();
     return onDashboardRefresh(() => void refresh());
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh closes over limit
+  }, [limit]);
 
   async function onSaveSettings(e: FormEvent) {
     e.preventDefault();
@@ -308,7 +311,8 @@ export function EmailSection() {
             ) : null}
           </div>
         }
-        style={{ animationDelay: "0.1s" }}
+        count={configured && !loading ? all.length : null}
+        accent="accent"
       >
         {!configured && !showSettings ? (
           <PermissionCallout

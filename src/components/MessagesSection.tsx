@@ -16,9 +16,10 @@ import { DetailDrawer } from "./DetailDrawer";
 import { ModuleSection } from "./ModuleSection";
 import { PermissionCallout } from "./PermissionCallout";
 
-const TOP_COUNT = 10;
+type Props = { limit?: number };
 
-export function MessagesSection() {
+export function MessagesSection({ limit = 10 }: Props) {
+  const topCount = limit;
   const [groups, setGroups] = useState<GroupedUnreadMessage[]>([]);
   const [accessStatus, setAccessStatus] = useState<string | null>(null);
   const [accessDetail, setAccessDetail] = useState<string | null>(null);
@@ -99,7 +100,7 @@ export function MessagesSection() {
             >
               Refresh
             </button>
-            {!needsPermission && !unavailable && groups.length > TOP_COUNT ? (
+            {!needsPermission && !unavailable && groups.length > topCount ? (
               <button
                 type="button"
                 className="btn btn-ghost"
@@ -110,7 +111,9 @@ export function MessagesSection() {
             ) : null}
           </div>
         }
-        style={{ animationDelay: "0.05s" }}
+        count={
+          !needsPermission && !unavailable && !loading ? groups.length : null
+        }
       >
         {needsPermission ? (
           <PermissionCallout
@@ -143,7 +146,7 @@ export function MessagesSection() {
         ) : null}
 
         {!needsPermission && !unavailable
-          ? messageRows(groups.slice(0, TOP_COUNT))
+          ? messageRows(groups.slice(0, topCount))
           : null}
       </ModuleSection>
 

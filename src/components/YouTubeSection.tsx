@@ -12,7 +12,9 @@ import type { YoutubeItem, YoutubePref } from "../lib/types";
 import { DetailDrawer } from "./DetailDrawer";
 import { ModuleSection } from "./ModuleSection";
 
-export function YouTubeSection() {
+type Props = { limit?: number };
+
+export function YouTubeSection({ limit = 10 }: Props) {
   const [videos, setVideos] = useState<YoutubeItem[]>([]);
   const [prefs, setPrefs] = useState<YoutubePref[]>([]);
   const [channelId, setChannelId] = useState("");
@@ -33,7 +35,7 @@ export function YouTubeSection() {
         );
       }
       const [items, prefRows] = await Promise.all([
-        listYoutubeItems(10),
+        listYoutubeItems(limit),
         listYoutubePrefs(),
       ]);
       setVideos(items);
@@ -50,7 +52,8 @@ export function YouTubeSection() {
   useEffect(() => {
     void refresh();
     return onDashboardRefresh(() => void refresh({ fetch: true }));
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [limit]);
 
   async function onAddChannel(e: FormEvent) {
     e.preventDefault();
@@ -88,7 +91,7 @@ export function YouTubeSection() {
             </button>
           </div>
         }
-        style={{ animationDelay: "0.18s" }}
+        count={!loading ? videos.length : null}
       >
         {error ? <p className="module-empty">{error}</p> : null}
         {status ? <p className="module-empty">{status}</p> : null}

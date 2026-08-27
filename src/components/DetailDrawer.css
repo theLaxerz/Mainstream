@@ -19,12 +19,18 @@
   position: relative;
   width: min(440px, 100%);
   height: 100%;
-  background: var(--surface-strong);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(243, 247, 245, 0.96));
   border-left: 1px solid var(--line);
   box-shadow: -18px 0 48px rgba(15, 42, 51, 0.16);
   display: flex;
   flex-direction: column;
   animation: detail-slide-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  backdrop-filter: blur(18px);
+}
+
+.detail-drawer.is-wide {
+  width: min(520px, 100%);
 }
 
 .detail-drawer-header {

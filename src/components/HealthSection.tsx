@@ -16,7 +16,9 @@ function formatSleep(minutes: number): string {
   return `${h}h ${m}m`;
 }
 
-export function HealthSection() {
+type Props = { limit?: number };
+
+export function HealthSection({ limit = 7 }: Props) {
   const [today, setToday] = useState<HealthDay | null>(null);
   const [history, setHistory] = useState<HealthDay[]>([]);
   const [exportPath, setExportPath] = useState("");
@@ -32,7 +34,7 @@ export function HealthSection() {
       setExportPath(settings.exportPath);
       const [t, days] = await Promise.all([
         healthTodaySummary(),
-        listHealthDays(7),
+        listHealthDays(limit),
       ]);
       setToday(t);
       setHistory(days);
@@ -47,7 +49,8 @@ export function HealthSection() {
   useEffect(() => {
     void refresh();
     return onDashboardRefresh(() => void refresh());
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [limit]);
 
   async function onSavePath(e: FormEvent) {
     e.preventDefault();
@@ -92,7 +95,7 @@ export function HealthSection() {
           </button>
         </div>
       }
-      style={{ animationDelay: "0.14s" }}
+      count={!loading && today ? 1 : null}
     >
       {showSettings ? (
         <form className="notes-form" onSubmit={onSavePath}>
@@ -152,7 +155,7 @@ export function HealthSection() {
         <>
           <p className="module-eyebrow finance-subhead">Recent days</p>
           <ul className="module-list">
-            {history.slice(0, 5).map((d) => (
+            {history.slice(0, Math.max(3, limit - 1)).map((d) => (
               <li key={d.day}>
                 <div className="module-row-main">
                   <p className="module-row-title">{d.day}</p>

@@ -30,6 +30,67 @@ export type DashboardLayout = {
   modules: ModuleLayoutEntry[];
 };
 
+export const MODULE_META: Record<
+  ModuleId,
+  { title: string; eyebrow: string; blurb: string }
+> = {
+  messages: {
+    title: "Messages",
+    eyebrow: "Unread",
+    blurb: "iMessage conversations grouped by chat",
+  },
+  email: {
+    title: "Email",
+    eyebrow: "Important",
+    blurb: "IMAP inbox with importance filtering",
+  },
+  mail: {
+    title: "Mail",
+    eyebrow: "Physical",
+    blurb: "USPS Informed Delivery envelope scans",
+  },
+  news: {
+    title: "News",
+    eyebrow: "Tailored",
+    blurb: "Ranked RSS stories that learn from you",
+  },
+  finance: {
+    title: "Finance",
+    eyebrow: "Ledger",
+    blurb: "Local balances, transactions, CSV import",
+  },
+  notes: {
+    title: "Notes",
+    eyebrow: "Recent",
+    blurb: "Quick capture sorted by update time",
+  },
+  health: {
+    title: "Health",
+    eyebrow: "Apple Health",
+    blurb: "Steps, sleep, and heart rate imports",
+  },
+  home: {
+    title: "Home",
+    eyebrow: "Cameras",
+    blurb: "Ring and Blink devices at a glance",
+  },
+  youtube: {
+    title: "YouTube",
+    eyebrow: "Channels",
+    blurb: "Latest uploads from followed channels",
+  },
+  streaming: {
+    title: "Streaming",
+    eyebrow: "Watch",
+    blurb: "What's hot across your services",
+  },
+  shortcuts: {
+    title: "Shortcuts",
+    eyebrow: "Launch",
+    blurb: "Website and app launchers",
+  },
+};
+
 const SETTING_KEY = "dashboard.layout.v1";
 
 export const DEFAULT_MODULE_LIMITS: Record<ModuleId, number> = {
@@ -37,7 +98,7 @@ export const DEFAULT_MODULE_LIMITS: Record<ModuleId, number> = {
   email: 10,
   mail: 12,
   news: 8,
-  finance: 5,
+  finance: 10,
   notes: 10,
   health: 7,
   home: 8,
@@ -60,13 +121,18 @@ const DEFAULT_ORDER: ModuleId[] = [
   "shortcuts",
 ];
 
+const DEFAULT_PLACEMENT: Partial<Record<ModuleId, ModulePlacement>> = {
+  mail: "full",
+  streaming: "full",
+};
+
 export function defaultLayout(): DashboardLayout {
   return {
     modules: DEFAULT_ORDER.map((id, order) => ({
       id,
       enabled: true,
       listLimit: DEFAULT_MODULE_LIMITS[id],
-      placement: "left" as ModulePlacement,
+      placement: DEFAULT_PLACEMENT[id] ?? "left",
       order,
     })),
   };
@@ -106,7 +172,9 @@ export function normalizeLayout(raw: unknown): DashboardLayout {
     const placement: ModulePlacement =
       placementRaw === "right" || placementRaw === "full"
         ? placementRaw
-        : "left";
+        : placementRaw === "left"
+          ? "left"
+          : (DEFAULT_PLACEMENT[id] ?? "left");
     const order =
       typeof (item as { order?: number }).order === "number"
         ? (item as { order: number }).order
@@ -137,7 +205,9 @@ export async function loadDashboardLayout(): Promise<DashboardLayout> {
   }
 }
 
-export async function saveDashboardLayout(layout: DashboardLayout): Promise<void> {
+export async function saveDashboardLayout(
+  layout: DashboardLayout,
+): Promise<void> {
   const normalized = normalizeLayout(layout);
   await setSetting(SETTING_KEY, JSON.stringify(normalized));
 }
@@ -152,24 +222,11 @@ export function getModuleEntry(
   );
 }
 
-export function placementGridStyle(
-  placement: ModulePlacement,
-): React.CSSProperties | undefined {
-  if (placement === "full") {
-    return { gridColumn: "1 / -1" };
-  }
-  if (placement === "right") {
-    return { gridColumn: "2 / 3" };
-  }
-  return undefined;
-}
-
-// React.CSSProperties without importing React in a .ts file — use inline type
-type GridStyle = {
+export type GridStyle = {
   gridColumn?: string;
 };
 
-export function placementGridStylePlain(
+export function placementGridStyle(
   placement: ModulePlacement,
 ): GridStyle | undefined {
   if (placement === "full") {
@@ -179,4 +236,45 @@ export function placementGridStylePlain(
     return { gridColumn: "2 / 3" };
   }
   return undefined;
+}
+
+export function moveModule(
+  layout: DashboardLayout,
+  id: ModuleId,
+  direction: -1 | 1,
+): DashboardLayout {
+  const modules = [...layout.modules].sort((a, b) => a.order - b.order);
+  const index = modules.findIndex((m) => m.id === id);
+  if (index < 0) return layout;
+  const target = index + direction;
+  if (target < 0 || target >= modules.length) return layout;
+  const next = [...modules];
+  const [item] = next.splice(index, 1);
+  next.splice(target, 0, item);
+  return {
+    modules: next.map((m, order) => ({ ...m, order })),
+  };
+}
+
+export function updateModule(
+  layout: DashboardLayout,
+  id: ModuleId,
+  patch: Partial<Omit<ModuleLayoutEntry, "id" | "order">>,
+): DashboardLayout {
+  return {
+    modules: layout.modules.map((m) => {
+      if (m.id !== id) return m;
+      const listLimit =
+        patch.listLimit !== undefined
+          ? clampLimit(patch.listLimit, id)
+          : m.listLimit;
+      return { ...m, ...patch, listLimit };
+    }),
+  };
+}
+
+export function enabledModules(layout: DashboardLayout): ModuleLayoutEntry[] {
+  return [...layout.modules]
+    .filter((m) => m.enabled)
+    .sort((a, b) => a.order - b.order);
 }

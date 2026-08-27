@@ -55,6 +55,9 @@ The **Mail** module searches your synced mailbox for USPS Informed Delivery dige
 
 ## Layout
 
+- Sticky **command bar**: live clock, **Layout** customizer, **Refresh all**
+- Shortcuts: `⌘,` customize layout · `⌘⇧R` refresh all modules
+- Layout prefs (enable/order/width/item counts) persist in SQLite settings
 - `src/` — React UI (dashboard, clock, module sections, detail drawers)
 - `src-tauri/` — Rust core, SQLite (`app.db`), Tauri commands
 - `feeds.default.json` — starter RSS feeds for the news module

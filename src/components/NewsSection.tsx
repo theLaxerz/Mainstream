@@ -21,7 +21,9 @@ import { DetailDrawer } from "./DetailDrawer";
 import { ModuleSection } from "./ModuleSection";
 import "./NewsSection.css";
 
-export function NewsSection() {
+type Props = { limit?: number };
+
+export function NewsSection({ limit: dashboardLimit }: Props) {
   const [stories, setStories] = useState<NewsItem[]>([]);
   const [prefs, setPrefs] = useState<NewsPref[]>([]);
   const [showMore, setShowMore] = useState(false);
@@ -33,7 +35,8 @@ export function NewsSection() {
   const [newFeedUrl, setNewFeedUrl] = useState("");
   const [newFeedTitle, setNewFeedTitle] = useState("");
 
-  const limit = showMore ? NEWS_MORE_LIMIT : NEWS_DASHBOARD_LIMIT;
+  const baseLimit = dashboardLimit ?? NEWS_DASHBOARD_LIMIT;
+  const limit = showMore ? NEWS_MORE_LIMIT : baseLimit;
 
   async function loadStories(nextLimit = limit) {
     const rows = await listNews(nextLimit);
@@ -217,7 +220,7 @@ export function NewsSection() {
             </button>
           </div>
         }
-        style={{ animationDelay: "0.14s" }}
+        count={!loading ? stories.length : null}
       >
         {error ? <p className="module-empty">{error}</p> : null}
         {status && !error ? <p className="news-status">{status}</p> : null}

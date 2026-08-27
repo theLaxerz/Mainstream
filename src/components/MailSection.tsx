@@ -39,7 +39,9 @@ function MailThumb({ pieceId }: { pieceId: number }) {
   return <img className="mail-thumb" src={src} alt="" />;
 }
 
-export function MailSection() {
+type Props = { limit?: number };
+
+export function MailSection({ limit = 12 }: Props) {
   const [pieces, setPieces] = useState<PhysicalMailPiece[]>([]);
   const [configured, setConfigured] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -58,7 +60,7 @@ export function MailSection() {
       setPieces([]);
       return;
     }
-    const rows = await listPhysicalMail(12);
+    const rows = await listPhysicalMail(limit);
     setPieces(rows);
   }
 
@@ -85,7 +87,8 @@ export function MailSection() {
   useEffect(() => {
     void refresh();
     return onDashboardRefresh(() => void refresh());
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [limit]);
 
   return (
     <>
@@ -104,7 +107,7 @@ export function MailSection() {
             </button>
           </div>
         }
-        style={{ animationDelay: "0.12s" }}
+        count={configured && !loading ? pieces.length : null}
       >
         {!configured ? (
           <PermissionCallout
