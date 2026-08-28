@@ -8,6 +8,7 @@
 
 .clock-face {
   position: relative;
+  overflow: hidden;
   width: min(36vw, 240px);
   aspect-ratio: 1;
   border-radius: 50%;

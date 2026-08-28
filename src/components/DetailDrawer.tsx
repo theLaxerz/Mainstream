@@ -22,14 +22,18 @@ export function DetailDrawer({
 }: Props) {
   useEffect(() => {
     if (!open) return;
-    const prev = document.body.style.overflow;
+    const shell = document.querySelector(".app-shell") as HTMLElement | null;
+    const prevBody = document.body.style.overflow;
+    const prevShell = shell?.style.overflow ?? "";
     document.body.style.overflow = "hidden";
+    if (shell) shell.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => {
-      document.body.style.overflow = prev;
+      document.body.style.overflow = prevBody;
+      if (shell) shell.style.overflow = prevShell;
       window.removeEventListener("keydown", onKey);
     };
   }, [open, onClose]);
