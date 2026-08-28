@@ -16,6 +16,8 @@ import type {
   StreamingProvider,
   StreamingSettings,
   DashboardRefreshResult,
+  WeatherPlace,
+  WeatherSnapshot,
   NewsFeedbackAction,
   NewsItem,
   NewsPref,
@@ -323,4 +325,36 @@ export async function openStreamingItem(id: number): Promise<void> {
 
 export async function refreshDashboard(): Promise<DashboardRefreshResult> {
   return invoke("refresh_dashboard");
+}
+
+export async function searchWeatherPlaces(query: string): Promise<WeatherPlace[]> {
+  return invoke("search_weather_places", { query });
+}
+
+export async function getWeather(): Promise<WeatherSnapshot | null> {
+  return invoke("get_weather");
+}
+
+export async function saveWeatherPlace(input: {
+  name: string;
+  latitude: number;
+  longitude: number;
+  admin?: string | null;
+  country?: string | null;
+  units?: string;
+}): Promise<WeatherSnapshot> {
+  return invoke("save_weather_place", {
+    input: {
+      name: input.name,
+      latitude: input.latitude,
+      longitude: input.longitude,
+      admin: input.admin ?? null,
+      country: input.country ?? null,
+      units: input.units ?? null,
+    },
+  });
+}
+
+export async function clearWeatherPlace(): Promise<void> {
+  return invoke("clear_weather_place");
 }

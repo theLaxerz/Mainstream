@@ -8,6 +8,7 @@
   --ink: #12262c;
   --ink-soft: #3d5a63;
   --ink-faint: #6d8a92;
+  --ink-muted: #6d8a92;
   --surface: rgba(243, 247, 245, 0.78);
   --surface-strong: rgba(255, 255, 255, 0.9);
   --line: rgba(18, 38, 44, 0.12);
@@ -20,6 +21,27 @@
   --radius: 18px;
   --font-display: "Fraunces", "Iowan Old Style", "Palatino Linotype", serif;
   --font-body: "Figtree", "Avenir Next", "Segoe UI", sans-serif;
+  --page-bg:
+    radial-gradient(ellipse 80% 55% at 12% 8%, rgba(201, 120, 42, 0.22), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 88% 18%, rgba(31, 122, 116, 0.28), transparent 50%),
+    radial-gradient(ellipse 90% 70% at 50% 100%, rgba(15, 42, 51, 0.18), transparent 60%),
+    linear-gradient(165deg, #eaf3f1 0%, #c9ddd8 42%, #9fbdc3 100%);
+  --command-bar-bg: rgba(243, 247, 245, 0.55);
+  --command-bar-bg-compact: rgba(243, 247, 245, 0.88);
+  --row-bg: rgba(255, 255, 255, 0.45);
+  --row-bg-hover: rgba(255, 255, 255, 0.78);
+  --overlay: rgba(15, 42, 51, 0.35);
+  --hero-card-bg:
+    radial-gradient(circle at 20% 0%, rgba(255, 255, 255, 0.7), transparent 45%),
+    radial-gradient(circle at 90% 100%, rgba(31, 122, 116, 0.16), transparent 50%),
+    linear-gradient(165deg, rgba(255, 255, 255, 0.9), rgba(215, 230, 227, 0.82));
+  --hero-card-line: rgba(18, 38, 44, 0.1);
+  --hero-card-inset: rgba(255, 255, 255, 0.75);
+  --clock-face-bg:
+    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.55), transparent 42%),
+    radial-gradient(circle at 70% 75%, rgba(31, 122, 116, 0.18), transparent 45%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.92), rgba(215, 230, 227, 0.88));
+  --brand-fill: #f7fbf9;
   color: var(--ink);
   background: var(--bg-mist);
   font-family: var(--font-body);
@@ -27,6 +49,48 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+html[data-theme="dusk"] {
+  --bg-deep: #07151a;
+  --bg-mid: #123039;
+  --bg-mist: #0c1f25;
+  --bg-foam: #16343c;
+  --ink: #e8f2ef;
+  --ink-soft: #c3d6d1;
+  --ink-faint: #8eaaa8;
+  --ink-muted: #8eaaa8;
+  --surface: rgba(14, 36, 42, 0.78);
+  --surface-strong: rgba(18, 46, 54, 0.94);
+  --line: rgba(232, 242, 239, 0.12);
+  --accent: #e39a4a;
+  --accent-deep: #f0c38a;
+  --teal: #4cb8b0;
+  --teal-soft: rgba(76, 184, 176, 0.18);
+  --danger: #e07171;
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.38);
+  --page-bg:
+    radial-gradient(ellipse 80% 55% at 12% 8%, rgba(227, 154, 74, 0.2), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 88% 18%, rgba(76, 184, 176, 0.2), transparent 50%),
+    radial-gradient(ellipse 90% 70% at 50% 100%, rgba(0, 0, 0, 0.45), transparent 60%),
+    linear-gradient(165deg, #0b1d23 0%, #123039 48%, #07151a 100%);
+  --command-bar-bg: rgba(10, 28, 34, 0.55);
+  --command-bar-bg-compact: rgba(10, 28, 34, 0.9);
+  --row-bg: rgba(255, 255, 255, 0.05);
+  --row-bg-hover: rgba(255, 255, 255, 0.1);
+  --overlay: rgba(2, 8, 10, 0.55);
+  --hero-card-bg:
+    radial-gradient(circle at 20% 0%, rgba(255, 255, 255, 0.08), transparent 45%),
+    radial-gradient(circle at 90% 100%, rgba(76, 184, 176, 0.16), transparent 50%),
+    linear-gradient(165deg, rgba(22, 52, 60, 0.92), rgba(10, 28, 34, 0.88));
+  --hero-card-line: rgba(232, 242, 239, 0.12);
+  --hero-card-inset: rgba(255, 255, 255, 0.08);
+  --clock-face-bg:
+    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.1), transparent 42%),
+    radial-gradient(circle at 70% 75%, rgba(76, 184, 176, 0.18), transparent 45%),
+    linear-gradient(160deg, rgba(28, 64, 72, 0.95), rgba(12, 32, 38, 0.92));
+  --brand-fill: #eef7f4;
+  color-scheme: dark;
 }
 
 *,
@@ -45,11 +109,7 @@ body,
 
 body {
   color: var(--ink);
-  background:
-    radial-gradient(ellipse 80% 55% at 12% 8%, rgba(201, 120, 42, 0.22), transparent 55%),
-    radial-gradient(ellipse 70% 50% at 88% 18%, rgba(31, 122, 116, 0.28), transparent 50%),
-    radial-gradient(ellipse 90% 70% at 50% 100%, rgba(15, 42, 51, 0.18), transparent 60%),
-    linear-gradient(165deg, #eaf3f1 0%, #c9ddd8 42%, #9fbdc3 100%);
+  background: var(--page-bg);
 }
 
 button,
