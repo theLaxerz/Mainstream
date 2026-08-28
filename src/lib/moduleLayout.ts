@@ -81,7 +81,7 @@ export const MODULE_META: Record<
   home: {
     title: "Home",
     eyebrow: "Cameras",
-    blurb: "Ring and Blink devices at a glance",
+    blurb: "Ring status and Blink camera stills",
   },
   youtube: {
     title: "YouTube",

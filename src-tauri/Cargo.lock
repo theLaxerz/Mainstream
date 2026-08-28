@@ -2363,11 +2363,13 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
  "thiserror 2.0.19",
  "urlencoding",
+ "uuid",
  "zip",
 ]
 

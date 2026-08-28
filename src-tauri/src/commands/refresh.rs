@@ -284,7 +284,7 @@ fn refresh_weather_module(state: &DbState, modules: &mut Vec<ModuleRefreshResult
 }
 
 fn refresh_home_module(state: &DbState, modules: &mut Vec<ModuleRefreshResult>) {
-    match fetch_home_devices(state) {
+    match fetch_home_devices(state, None) {
         Ok(Some(devices)) => push_ok(
             modules,
             "home",
