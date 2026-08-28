@@ -222,7 +222,7 @@ export function HomeSection({ limit = 8 }: Props) {
         {error ? <p className="module-empty">{error}</p> : null}
         {status && !manageOpen ? <p className="module-empty">{status}</p> : null}
         {loading ? <p className="module-empty">Loading cameras…</p> : null}
-        {!loading && devices.length === 0 && !error ? (
+        {!loading && devices.length === 0 ? (
           <p className="module-empty">
             Connect Blink with email, password, and the SMS/email PIN Blink
             sends. Camera stills load here after sign-in. Ring still uses a
