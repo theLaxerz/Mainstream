@@ -74,9 +74,16 @@
 
 .command-bar-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
+  flex-wrap: nowrap;
+  gap: 0.5rem;
   justify-content: flex-end;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 2;
+}
+
+.command-bar-actions .btn {
+  flex-shrink: 0;
 }
 
 @media (max-width: 860px) {
@@ -86,8 +93,13 @@
     padding-right: 1rem;
   }
 
-  .command-bar-clock {
+  .command-bar-clock,
+  .command-bar-status {
     display: none;
+  }
+
+  .command-bar-actions {
+    flex-wrap: wrap;
   }
 }
 

@@ -104,8 +104,9 @@ export function CommandBar({
             className="btn btn-ghost"
             onClick={onPalette}
             title="Command palette (⌘K)"
+            aria-label="Open command palette"
           >
-            ⌘K
+            Search
           </button>
           <button
             type="button"
