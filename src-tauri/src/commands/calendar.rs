@@ -1,17 +1,31 @@
-//! macOS Calendar (EventKit) — upcoming events via a local Swift helper.
+//! macOS Calendar (EventKit) — upcoming events via an in-process EventKit bridge.
+//!
+//! Access is requested from the Mainstream process itself so TCC attributes the
+//! prompt to this app (and Mainstream appears under Privacy → Calendars).
 
 use crate::commands::open::open_with_system;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::ffi::{c_char, CStr};
 use std::process::Command;
 
 const APPLE_EPOCH_UNIX: i64 = 978_307_200;
+const CAL_OK: i32 = 0;
+const CAL_NEEDS_PERMISSION: i32 = 1;
+
+extern "C" {
+    fn mainstream_calendar_events(
+        days_ahead: i64,
+        json_out: *mut *mut c_char,
+        error_out: *mut *mut c_char,
+    ) -> i32;
+    fn mainstream_calendar_string_free(s: *mut c_char);
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CalendarAccess {
-    /// `"ok"`, `"needs_permission"`, or `"unavailable"`.
+    /// `"ok"`, `"needs_permission"`, `"unavailable"`, or `"error"`.
     pub status: String,
     pub detail: Option<String>,
 }
@@ -28,65 +42,68 @@ pub struct CalendarEvent {
     pub calendar_name: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct CalendarScriptError {
-    error: String,
-    status: Option<String>,
-}
-
-fn calendar_script_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/fetch_calendar_events.swift")
-}
-
-fn run_calendar_script(days_back: i64, days_ahead: i64) -> Result<Vec<CalendarEvent>, CalendarAccess> {
-    let script = calendar_script_path();
-    if !script.exists() {
-        return Err(CalendarAccess {
-            status: "unavailable".into(),
-            detail: Some("Calendar helper script is missing from the app bundle.".into()),
-        });
+fn take_cstring(ptr: *mut c_char) -> Option<String> {
+    if ptr.is_null() {
+        return None;
     }
+    unsafe {
+        let value = CStr::from_ptr(ptr).to_string_lossy().into_owned();
+        mainstream_calendar_string_free(ptr);
+        Some(value)
+    }
+}
 
-    let output = Command::new("swift")
-        .arg(&script)
-        .arg(days_back.to_string())
-        .arg(days_ahead.to_string())
-        .output()
-        .map_err(|e| CalendarAccess {
-            status: "unavailable".into(),
-            detail: Some(format!("Failed to run Calendar helper: {e}")),
-        })?;
+fn fetch_events(days_ahead: i64) -> CalendarEventsResult {
+    let mut json_ptr: *mut c_char = std::ptr::null_mut();
+    let mut error_ptr: *mut c_char = std::ptr::null_mut();
+    let code = unsafe { mainstream_calendar_events(days_ahead, &mut json_ptr, &mut error_ptr) };
+    let json = take_cstring(json_ptr);
+    let detail = take_cstring(error_ptr);
 
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if !output.status.success() {
-        if let Ok(err) = serde_json::from_str::<CalendarScriptError>(&stdout) {
-            let status = err.status.unwrap_or_else(|| "error".into());
-            if status == "needs_permission" {
-                return Err(CalendarAccess {
-                    status: "needs_permission".into(),
-                    detail: Some(err.error),
-                });
-            }
-            return Err(CalendarAccess {
-                status: "error".into(),
-                detail: Some(err.error),
-            });
+    if code == CAL_OK {
+        match json
+            .as_deref()
+            .map(serde_json::from_str::<Vec<CalendarEvent>>)
+        {
+            Some(Ok(events)) => CalendarEventsResult {
+                access: CalendarAccess {
+                    status: "ok".into(),
+                    detail: None,
+                },
+                events,
+            },
+            Some(Err(e)) => CalendarEventsResult {
+                access: CalendarAccess {
+                    status: "error".into(),
+                    detail: Some(format!("Failed to parse calendar events: {e}")),
+                },
+                events: Vec::new(),
+            },
+            None => CalendarEventsResult {
+                access: CalendarAccess {
+                    status: "error".into(),
+                    detail: Some("Calendar helper returned no data.".into()),
+                },
+                events: Vec::new(),
+            },
         }
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(CalendarAccess {
-            status: "error".into(),
-            detail: Some(if stderr.is_empty() {
-                "Calendar helper exited with an error.".into()
-            } else {
-                stderr
-            }),
-        });
+    } else if code == CAL_NEEDS_PERMISSION {
+        CalendarEventsResult {
+            access: CalendarAccess {
+                status: "needs_permission".into(),
+                detail: detail.or_else(|| Some("Calendar access denied".into())),
+            },
+            events: Vec::new(),
+        }
+    } else {
+        CalendarEventsResult {
+            access: CalendarAccess {
+                status: "error".into(),
+                detail: detail.or_else(|| Some("Calendar helper exited with an error.".into())),
+            },
+            events: Vec::new(),
+        }
     }
-
-    serde_json::from_str(&stdout).map_err(|e| CalendarAccess {
-        status: "error".into(),
-        detail: Some(format!("Failed to parse calendar events: {e}")),
-    })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -96,38 +113,13 @@ pub struct CalendarEventsResult {
     pub events: Vec<CalendarEvent>,
 }
 
-fn fetch_events(days_ahead: i64) -> CalendarEventsResult {
-    match run_calendar_script(0, days_ahead) {
-        Ok(events) => CalendarEventsResult {
-            access: CalendarAccess {
-                status: "ok".into(),
-                detail: None,
-            },
-            events,
-        },
-        Err(access) => CalendarEventsResult {
-            access,
-            events: Vec::new(),
-        },
-    }
-}
-
 #[tauri::command]
 pub fn calendar_access_status() -> CalendarAccess {
-    match run_calendar_script(0, 1) {
-        Ok(_) => CalendarAccess {
-            status: "ok".into(),
-            detail: None,
-        },
-        Err(access) => access,
-    }
+    fetch_events(1).access
 }
 
 #[tauri::command]
-pub fn list_calendar_events(
-    limit: Option<i64>,
-    days_ahead: Option<i64>,
-) -> CalendarEventsResult {
+pub fn list_calendar_events(limit: Option<i64>, days_ahead: Option<i64>) -> CalendarEventsResult {
     let limit = limit.unwrap_or(12).clamp(1, 100);
     let days_ahead = days_ahead.unwrap_or(14).clamp(1, 90);
     let mut result = fetch_events(days_ahead);
@@ -137,15 +129,24 @@ pub fn list_calendar_events(
 
 #[tauri::command]
 pub fn open_calendar_privacy_settings() -> Result<(), String> {
-    let status = Command::new("open")
-        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars")
-        .status()
-        .map_err(|e| format!("failed to open Calendar privacy settings: {e}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("open exited with status {status}"))
+    // Prefer the modern Privacy & Security deep link; fall back to the legacy pane.
+    let urls = [
+        "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Calendars",
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars",
+    ];
+
+    let mut last_err = None;
+    for url in urls {
+        match Command::new("open").arg(url).status() {
+            Ok(status) if status.success() => return Ok(()),
+            Ok(status) => {
+                last_err = Some(format!("open exited with status {status}"));
+            }
+            Err(e) => last_err = Some(e.to_string()),
+        }
     }
+
+    Err(last_err.unwrap_or_else(|| "failed to open Calendar privacy settings".into()))
 }
 
 #[tauri::command]

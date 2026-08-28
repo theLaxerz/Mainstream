@@ -127,7 +127,7 @@ export function LayoutCustomize({ open, layout, onClose, onChange }: Props) {
                   />
                 </label>
                 <label className="layout-field">
-                  <span>Width</span>
+                  <span>Column</span>
                   <select
                     className="field-select"
                     value={entry.placement}
@@ -138,7 +138,8 @@ export function LayoutCustomize({ open, layout, onClose, onChange }: Props) {
                       })
                     }
                   >
-                    <option value="left">Auto</option>
+                    <option value="auto">Auto</option>
+                    <option value="left">Left column</option>
                     <option value="right">Right column</option>
                     <option value="full">Full width</option>
                   </select>

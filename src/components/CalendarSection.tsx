@@ -51,6 +51,7 @@ export function CalendarSection({ limit = 10 }: Props) {
 
   const needsPermission = accessStatus === "needs_permission";
   const unavailable = accessStatus === "unavailable";
+  const accessError = accessStatus === "error";
 
   function eventRows(rows: CalendarEvent[]) {
     return (
@@ -106,10 +107,12 @@ export function CalendarSection({ limit = 10 }: Props) {
         {needsPermission ? (
           <PermissionCallout
             title="Calendar access needed"
-            body={
-              accessDetail ??
-              "Allow Mainstream to read your calendar in System Settings, then refresh."
-            }
+            body="Mainstream needs Calendar access to show upcoming events. macOS should ask once; if no prompt appeared, enable Mainstream under Calendars."
+            steps={[
+              "Open System Settings → Privacy & Security → Calendars",
+              "Enable Mainstream (or your terminal / IDE if running in dev)",
+              "Return here and refresh",
+            ]}
             actionLabel="Open Calendar privacy"
             onAction={() => void openCalendarPrivacySettings()}
           />
@@ -119,10 +122,19 @@ export function CalendarSection({ limit = 10 }: Props) {
             {accessDetail ?? "Calendar is unavailable on this system."}
           </p>
         ) : null}
-        {!loading && !needsPermission && !unavailable && events.length === 0 ? (
+        {accessError ? (
+          <p className="module-empty">
+            {accessDetail ?? "Could not read calendars."}
+          </p>
+        ) : null}
+        {!loading &&
+        !needsPermission &&
+        !unavailable &&
+        !accessError &&
+        events.length === 0 ? (
           <p className="module-empty">No upcoming events in the next few weeks.</p>
         ) : null}
-        {!needsPermission && !unavailable && events.length > 0
+        {!needsPermission && !unavailable && !accessError && events.length > 0
           ? eventRows(events.slice(0, limit))
           : null}
       </ModuleSection>

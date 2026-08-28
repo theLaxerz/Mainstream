@@ -38,6 +38,16 @@ Messages reads `~/Library/Messages/chat.db`. macOS requires **Full Disk Access**
 
 There is no entitlement that grants FDA — it is a user TCC grant. The app deep-links to the settings pane and shows an empty state until access works.
 
+### Calendar
+
+Calendar reads upcoming events through EventKit. macOS requires **Calendars** access:
+
+1. Load the dashboard so Mainstream can request access (a system prompt should appear)
+2. If you declined, or no prompt appeared: System Settings → Privacy & Security → Calendars
+3. Enable **Mainstream** (or your terminal / IDE when using `tauri dev`), then Refresh
+
+The first request has to come from Mainstream itself. After that, Mainstream shows up in the Calendars list so you can toggle it.
+
 ### Email (IMAP)
 
 IMAP host/user live in SQLite settings; passwords are stored only in the **macOS Keychain**. Use an app-specific password for iCloud or Gmail.
