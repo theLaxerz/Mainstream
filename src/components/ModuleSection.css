@@ -101,14 +101,56 @@
   gap: 0.45rem;
 }
 
+.module-synced {
+  margin: 0.15rem 0 0;
+  color: var(--ink-faint);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.sparkline-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem 1.25rem;
+  margin: 0 0 0.9rem;
+}
+
+.sparkline {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.sparkline-svg {
+  flex-shrink: 0;
+}
+
+.sparkline-label {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.sparkline-value {
+  margin: 0.1rem 0 0;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 650;
+  color: var(--ink);
+}
+
 .module-skeleton-row {
   height: 3rem;
   border-radius: 12px;
   background: linear-gradient(
     90deg,
-    rgba(255, 255, 255, 0.35),
-    rgba(255, 255, 255, 0.7),
-    rgba(255, 255, 255, 0.35)
+    var(--row-bg),
+    var(--row-bg-hover),
+    var(--row-bg)
   );
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.2s ease-in-out infinite;
@@ -143,7 +185,7 @@
   gap: 0.65rem;
   padding: 0.6rem 0.7rem;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.45);
+  background: var(--row-bg);
   border: 1px solid transparent;
   transition:
     border-color 0.2s ease,
@@ -154,7 +196,7 @@
 .module-list li:hover,
 .module-row:hover {
   border-color: rgba(31, 122, 116, 0.22);
-  background: rgba(255, 255, 255, 0.78);
+  background: var(--row-bg-hover);
   transform: translateX(2px);
 }
 
@@ -245,7 +287,7 @@
 .btn-ghost:hover {
   border-color: rgba(31, 122, 116, 0.35);
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.5);
+  background: var(--row-bg-hover);
 }
 
 .btn-danger {

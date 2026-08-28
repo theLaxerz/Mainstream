@@ -6,6 +6,7 @@ use crate::commands::home::fetch_home_devices;
 use crate::commands::mail::sync_informed_delivery;
 use crate::commands::news::run_refresh_news;
 use crate::commands::streaming::{load_api_key, load_enabled_providers, run_refresh_streaming};
+use crate::commands::weather::run_refresh_weather;
 use crate::commands::youtube::run_refresh_youtube;
 use crate::db::{now_iso, DbError, DbState};
 use rusqlite::Connection;
@@ -265,8 +266,25 @@ fn refresh_health_module(state: &DbState, modules: &mut Vec<ModuleRefreshResult>
     }
 }
 
+fn refresh_weather_module(state: &DbState, modules: &mut Vec<ModuleRefreshResult>) {
+    match run_refresh_weather(state, true) {
+        Ok(Some(snap)) => push_ok(
+            modules,
+            "weather",
+            format!(
+                "{} · {:.0}° in {}",
+                snap.condition,
+                snap.temperature.round(),
+                snap.place.name
+            ),
+        ),
+        Ok(None) => push_skipped(modules, "weather", "No city saved"),
+        Err(e) => push_error(modules, "weather", e.to_string()),
+    }
+}
+
 fn refresh_home_module(state: &DbState, modules: &mut Vec<ModuleRefreshResult>) {
-    match fetch_home_devices(state) {
+    match fetch_home_devices(state, None) {
         Ok(Some(devices)) => push_ok(
             modules,
             "home",
@@ -290,6 +308,7 @@ pub fn refresh_dashboard(state: State<'_, DbState>) -> Result<DashboardRefreshRe
     refresh_streaming_module(&state, &mut modules);
     refresh_health_module(&state, &mut modules);
     refresh_home_module(&state, &mut modules);
+    refresh_weather_module(&state, &mut modules);
 
     push_skipped(
         &mut modules,

@@ -17,7 +17,7 @@ export const MODULE_IDS = [
 
 export type ModuleId = (typeof MODULE_IDS)[number];
 
-export type ModulePlacement = "left" | "right" | "full";
+export type ModulePlacement = "auto" | "left" | "right" | "full";
 
 export type ModuleLayoutEntry = {
   id: ModuleId;
@@ -28,8 +28,11 @@ export type ModuleLayoutEntry = {
 };
 
 export type DashboardLayout = {
+  version: number;
   modules: ModuleLayoutEntry[];
 };
+
+const LAYOUT_VERSION = 2;
 
 export const MODULE_META: Record<
   ModuleId,
@@ -78,7 +81,7 @@ export const MODULE_META: Record<
   home: {
     title: "Home",
     eyebrow: "Cameras",
-    blurb: "Ring and Blink devices at a glance",
+    blurb: "Ring status and Blink camera stills",
   },
   youtube: {
     title: "YouTube",
@@ -136,11 +139,12 @@ const DEFAULT_PLACEMENT: Partial<Record<ModuleId, ModulePlacement>> = {
 
 export function defaultLayout(): DashboardLayout {
   return {
+    version: LAYOUT_VERSION,
     modules: DEFAULT_ORDER.map((id, order) => ({
       id,
       enabled: true,
       listLimit: DEFAULT_MODULE_LIMITS[id],
-      placement: DEFAULT_PLACEMENT[id] ?? "left",
+      placement: DEFAULT_PLACEMENT[id] ?? "auto",
       order,
     })),
   };
@@ -157,10 +161,32 @@ function clampLimit(n: number, id: ModuleId): number {
   return Math.min(max, Math.max(min, Math.round(n)));
 }
 
+function parsePlacement(
+  value: unknown,
+  id: ModuleId,
+  rawVersion: number,
+): ModulePlacement {
+  const placementRaw = typeof value === "string" ? value : "";
+  let placement: ModulePlacement =
+    placementRaw === "auto" ||
+    placementRaw === "left" ||
+    placementRaw === "right" ||
+    placementRaw === "full"
+      ? placementRaw
+      : (DEFAULT_PLACEMENT[id] ?? "auto");
+  // v1 stored auto-flow as "left" (labeled Auto in the UI).
+  if (rawVersion < 2 && placement === "left") {
+    placement = "auto";
+  }
+  return placement;
+}
+
 export function normalizeLayout(raw: unknown): DashboardLayout {
   const base = defaultLayout();
   if (!raw || typeof raw !== "object") return base;
-  const modulesRaw = (raw as { modules?: unknown }).modules;
+  const rawObj = raw as { version?: unknown; modules?: unknown };
+  const rawVersion = typeof rawObj.version === "number" ? rawObj.version : 1;
+  const modulesRaw = rawObj.modules;
   if (!Array.isArray(modulesRaw)) return base;
 
   const byId = new Map<ModuleId, ModuleLayoutEntry>();
@@ -176,13 +202,11 @@ export function normalizeLayout(raw: unknown): DashboardLayout {
       Number((item as { listLimit?: number }).listLimit),
       id,
     );
-    const placementRaw = (item as { placement?: string }).placement;
-    const placement: ModulePlacement =
-      placementRaw === "right" || placementRaw === "full"
-        ? placementRaw
-        : placementRaw === "left"
-          ? "left"
-          : (DEFAULT_PLACEMENT[id] ?? "left");
+    const placement = parsePlacement(
+      (item as { placement?: string }).placement,
+      id,
+      rawVersion,
+    );
     const order =
       typeof (item as { order?: number }).order === "number"
         ? (item as { order: number }).order
@@ -200,7 +224,7 @@ export function normalizeLayout(raw: unknown): DashboardLayout {
   modules.forEach((m, i) => {
     m.order = i;
   });
-  return { modules };
+  return { version: LAYOUT_VERSION, modules };
 }
 
 export async function loadDashboardLayout(): Promise<DashboardLayout> {
@@ -243,6 +267,9 @@ export function placementGridStyle(
   if (placement === "right") {
     return { gridColumn: "2 / 3" };
   }
+  if (placement === "left") {
+    return { gridColumn: "1 / 2" };
+  }
   return undefined;
 }
 
@@ -260,6 +287,7 @@ export function moveModule(
   const [item] = next.splice(index, 1);
   next.splice(target, 0, item);
   return {
+    version: layout.version ?? 1,
     modules: next.map((m, order) => ({ ...m, order })),
   };
 }
@@ -270,6 +298,7 @@ export function updateModule(
   patch: Partial<Omit<ModuleLayoutEntry, "id" | "order">>,
 ): DashboardLayout {
   return {
+    version: layout.version ?? 1,
     modules: layout.modules.map((m) => {
       if (m.id !== id) return m;
       const listLimit =

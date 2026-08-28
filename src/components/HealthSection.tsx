@@ -8,6 +8,7 @@ import {
 } from "../lib/api";
 import { onDashboardRefresh } from "../lib/refresh";
 import type { HealthDay } from "../lib/types";
+import { Sparkline } from "./Sparkline";
 import { ModuleSection } from "./ModuleSection";
 
 function formatSleep(minutes: number): string {
@@ -126,7 +127,7 @@ export function HealthSection({ limit = 7 }: Props) {
         <div className="finance-totals">
           <div>
             <p className="module-row-meta">Steps</p>
-            <p className="module-row-title finance-total">{today.steps}</p>
+            <p className="module-row-title finance-total">{today.steps.toLocaleString()}</p>
           </div>
           <div>
             <p className="module-row-meta">Sleep</p>
@@ -145,17 +146,33 @@ export function HealthSection({ limit = 7 }: Props) {
         </div>
       ) : null}
 
+      {history.length > 1 ? (
+        <div className="sparkline-row">
+          <Sparkline
+            label="Steps · 7d"
+            values={[...history].slice().reverse().map((d) => d.steps)}
+            formatValue={(n) => Math.round(n).toLocaleString()}
+          />
+          <Sparkline
+            label="Sleep · 7d"
+            values={[...history].slice().reverse().map((d) => d.sleepMinutes)}
+            formatValue={formatSleep}
+            accent="var(--accent)"
+          />
+        </div>
+      ) : null}
+
       {!loading && !today ? (
         <p className="module-empty">
           No health data yet — set export path and import.
         </p>
       ) : null}
 
-      {history.length > 1 ? (
+      {history.length === 1 ? (
         <>
           <p className="module-eyebrow finance-subhead">Recent days</p>
           <ul className="module-list">
-            {history.slice(0, Math.max(3, limit - 1)).map((d) => (
+            {history.map((d) => (
               <li key={d.day}>
                 <div className="module-row-main">
                   <p className="module-row-title">{d.day}</p>

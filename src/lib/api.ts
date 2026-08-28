@@ -8,6 +8,7 @@ import type {
   HealthDay,
   HealthSettings,
   HealthImportResult,
+  BlinkLoginResult,
   HomeDevice,
   HomeSettings,
   YoutubeItem,
@@ -16,6 +17,8 @@ import type {
   StreamingProvider,
   StreamingSettings,
   DashboardRefreshResult,
+  WeatherPlace,
+  WeatherSnapshot,
   NewsFeedbackAction,
   NewsItem,
   NewsPref,
@@ -241,14 +244,35 @@ export async function getHomeSettings(): Promise<HomeSettings> {
 export async function saveHomeCredentials(input: {
   ringRefreshToken?: string;
   blinkEmail?: string;
-  blinkPassword?: string;
-  blinkDeviceUid?: string;
 }): Promise<HomeSettings> {
   return invoke("save_home_credentials", { input });
 }
 
 export async function listHomeDevices(): Promise<HomeDevice[]> {
   return invoke("list_home_devices");
+}
+
+export async function blinkStartLogin(
+  email: string,
+  password: string,
+): Promise<BlinkLoginResult> {
+  return invoke("blink_start_login", { email, password });
+}
+
+export async function blinkVerifyPin(pin: string): Promise<BlinkLoginResult> {
+  return invoke("blink_verify_pin", { pin });
+}
+
+export async function blinkDisconnect(): Promise<void> {
+  return invoke("blink_disconnect");
+}
+
+export async function homeDeviceImageBase64(id: string): Promise<string | null> {
+  return invoke("home_device_image_base64", { id });
+}
+
+export async function blinkCaptureSnapshot(id: string): Promise<HomeDevice> {
+  return invoke("blink_capture_snapshot", { id });
 }
 
 export async function listYoutubePrefs(): Promise<YoutubePref[]> {
@@ -323,4 +347,36 @@ export async function openStreamingItem(id: number): Promise<void> {
 
 export async function refreshDashboard(): Promise<DashboardRefreshResult> {
   return invoke("refresh_dashboard");
+}
+
+export async function searchWeatherPlaces(query: string): Promise<WeatherPlace[]> {
+  return invoke("search_weather_places", { query });
+}
+
+export async function getWeather(): Promise<WeatherSnapshot | null> {
+  return invoke("get_weather");
+}
+
+export async function saveWeatherPlace(input: {
+  name: string;
+  latitude: number;
+  longitude: number;
+  admin?: string | null;
+  country?: string | null;
+  units?: string;
+}): Promise<WeatherSnapshot> {
+  return invoke("save_weather_place", {
+    input: {
+      name: input.name,
+      latitude: input.latitude,
+      longitude: input.longitude,
+      admin: input.admin ?? null,
+      country: input.country ?? null,
+      units: input.units ?? null,
+    },
+  });
+}
+
+export async function clearWeatherPlace(): Promise<void> {
+  return invoke("clear_weather_place");
 }

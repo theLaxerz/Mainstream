@@ -19,6 +19,7 @@ pub fn run() {
             let db_path = data_dir.join("app.db");
             let database = Db::open(&db_path).map_err(|e| format!("failed to open db: {e}"))?;
             app.manage::<DbState>(Mutex::new(database));
+            app.manage(commands::blink::BlinkPendingState::new(None));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -72,6 +73,11 @@ pub fn run() {
             commands::home::get_home_settings,
             commands::home::save_home_credentials,
             commands::home::list_home_devices,
+            commands::blink::blink_start_login,
+            commands::blink::blink_verify_pin,
+            commands::blink::blink_disconnect,
+            commands::blink::home_device_image_base64,
+            commands::blink::blink_capture_snapshot,
             commands::youtube::list_youtube_prefs,
             commands::youtube::upsert_youtube_pref,
             commands::youtube::delete_youtube_pref,
@@ -85,6 +91,10 @@ pub fn run() {
             commands::streaming::list_streaming_hot,
             commands::streaming::list_streaming_new,
             commands::streaming::open_streaming_item,
+            commands::weather::search_weather_places,
+            commands::weather::get_weather,
+            commands::weather::save_weather_place,
+            commands::weather::clear_weather_place,
             commands::finance::list_accounts,
             commands::finance::create_account,
             commands::finance::update_account,

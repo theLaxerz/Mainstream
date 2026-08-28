@@ -1,13 +1,36 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./CommandBar.css";
+
+function scrollParentOf(el: HTMLElement | null): Element | Window {
+  let node = el?.parentElement ?? null;
+  while (node) {
+    const { overflowY } = getComputedStyle(node);
+    if (overflowY === "auto" || overflowY === "scroll") return node;
+    node = node.parentElement;
+  }
+  return window;
+}
 
 type Props = {
   onRefresh: () => void;
   onCustomize: () => void;
+  onPalette: () => void;
+  onToggleTheme: () => void;
+  themeLabel: string;
   refreshing?: boolean;
+  refreshStatus?: string | null;
 };
 
-export function CommandBar({ onRefresh, onCustomize, refreshing }: Props) {
+export function CommandBar({
+  onRefresh,
+  onCustomize,
+  onPalette,
+  onToggleTheme,
+  themeLabel,
+  refreshing,
+  refreshStatus,
+}: Props) {
+  const barRef = useRef<HTMLDivElement>(null);
   const [now, setNow] = useState(() => new Date());
   const [compact, setCompact] = useState(false);
 
@@ -17,10 +40,13 @@ export function CommandBar({ onRefresh, onCustomize, refreshing }: Props) {
   }, []);
 
   useEffect(() => {
-    const onScroll = () => setCompact(window.scrollY > 220);
+    const scroller = scrollParentOf(barRef.current);
+    const readY = () =>
+      scroller instanceof Element ? scroller.scrollTop : window.scrollY;
+    const onScroll = () => setCompact(readY() > 220);
     onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
+    scroller.addEventListener("scroll", onScroll, { passive: true });
+    return () => scroller.removeEventListener("scroll", onScroll);
   }, []);
 
   useEffect(() => {
@@ -34,10 +60,14 @@ export function CommandBar({ onRefresh, onCustomize, refreshing }: Props) {
         e.preventDefault();
         onCustomize();
       }
+      if (meta && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        onPalette();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onRefresh, onCustomize]);
+  }, [onRefresh, onCustomize, onPalette]);
 
   const time = new Intl.DateTimeFormat(undefined, {
     hour: "numeric",
@@ -52,15 +82,40 @@ export function CommandBar({ onRefresh, onCustomize, refreshing }: Props) {
   }).format(now);
 
   return (
-    <div className={`command-bar ${compact ? "is-compact" : ""}`}>
+    <div
+      ref={barRef}
+      className={`command-bar ${compact ? "is-compact" : ""}`}
+    >
       <div className="command-bar-inner">
         <div className="command-bar-brand">
           <span className="command-bar-mark">Mainstream</span>
           <span className="command-bar-clock" aria-live="polite">
             {date} · {time}
           </span>
+          {refreshStatus ? (
+            <span className="command-bar-status" role="status">
+              {refreshStatus}
+            </span>
+          ) : null}
         </div>
         <div className="command-bar-actions">
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={onPalette}
+            title="Command palette (⌘K)"
+            aria-label="Open command palette"
+          >
+            Search
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={onToggleTheme}
+            title="Cycle theme: auto, dusk, light"
+          >
+            {themeLabel}
+          </button>
           <button
             type="button"
             className="btn btn-ghost"
