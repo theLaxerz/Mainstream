@@ -51,7 +51,7 @@ export const MODULE_META: Record<
   email: {
     title: "Email",
     eyebrow: "Important",
-    blurb: "IMAP inbox with importance filtering",
+    blurb: "Google, Microsoft, or IMAP with importance filtering",
   },
   mail: {
     title: "Mail",

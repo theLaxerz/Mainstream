@@ -2,6 +2,8 @@ pub mod news;
 pub mod finance;
 pub mod messages;
 pub mod email;
+pub mod email_mailapp;
+pub mod email_oauth;
 pub mod calendar;
 pub mod blink;
 pub mod home;

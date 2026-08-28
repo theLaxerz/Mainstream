@@ -1,11 +1,11 @@
 //! USPS Informed Delivery — parse digest emails, extract scans, OCR on macOS.
 
 use crate::commands::email::{
-    load_known_contacts, load_password, parse_headers, read_settings, score_importance, upsert_email,
+    load_known_contacts, open_imap_session, parse_headers, read_settings, score_importance,
+    upsert_email,
 };
 use crate::db::{now_iso, DbError, DbState};
 use mailparse::MailHeaderMap;
-use native_tls::TlsConnector;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -422,9 +422,9 @@ fn extract_pieces_from_digest(
     Ok(pieces)
 }
 
-fn email_row_id(conn: &Connection, mailbox: &str, uid: u32) -> Result<Option<i64>, DbError> {
+fn email_row_id(conn: &Connection, mailbox: &str, uid: i64) -> Result<Option<i64>, DbError> {
     let mut stmt = conn.prepare("SELECT id FROM emails WHERE mailbox = ?1 AND uid = ?2")?;
-    let mut rows = stmt.query(params![mailbox, uid as i64])?;
+    let mut rows = stmt.query(params![mailbox, uid])?;
     if let Some(row) = rows.next()? {
         Ok(Some(row.get(0)?))
     } else {
@@ -475,7 +475,7 @@ fn imap_since_date(days: u32) -> String {
 }
 
 fn fetch_full_message(
-    session: &mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>,
+    session: &mut crate::commands::email::ImapSession,
     uid: u32,
 ) -> Result<Vec<u8>, DbError> {
     let set = uid.to_string();
@@ -493,39 +493,116 @@ fn fetch_full_message(
     Ok(body.to_vec())
 }
 
+fn ingest_digest(
+    conn: &Connection,
+    mailbox: &str,
+    uid: i64,
+    raw: &[u8],
+    user_email: &str,
+    known: &std::collections::HashSet<String>,
+    cache_dir: &Path,
+) -> Result<Option<(usize, usize)>, DbError> {
+    let headers = parse_headers(raw);
+    if !is_informed_delivery(
+        headers.from_addr.as_deref(),
+        headers.from_name.as_deref(),
+        &headers.subject,
+    ) {
+        return Ok(None);
+    }
+
+    let (is_important, score, is_junk) = score_importance(&headers, user_email, known, mailbox);
+    upsert_email(conn, uid, mailbox, &headers, is_important, score, is_junk)?;
+    let Some(email_id) = email_row_id(conn, mailbox, uid)? else {
+        return Ok(None);
+    };
+    let digest_date = digest_date_from_subject(&headers.subject, headers.date_iso.as_deref());
+    let parsed = extract_pieces_from_digest(raw, email_id, cache_dir)?;
+    let mut ocr_ran = 0usize;
+    for p in &parsed {
+        if p.had_vision {
+            ocr_ran += 1;
+        }
+    }
+    let n = replace_mail_pieces(
+        conn,
+        email_id,
+        digest_date.as_deref(),
+        &headers.subject,
+        &parsed,
+    )?;
+    if n == 0 {
+        return Ok(None);
+    }
+    Ok(Some((n, ocr_ran)))
+}
+
+fn sync_informed_delivery_mailapp(
+    conn: &Connection,
+    db_path: &Path,
+    account: &str,
+    user_email: &str,
+) -> Result<PhysicalMailSyncResult, DbError> {
+    let mailbox = format!("mailapp:{account}");
+    let candidates = crate::commands::email_mailapp::fetch_informed_candidates(account, 30)?;
+    let cache_dir = cache_dir_for(db_path);
+    let known = load_known_contacts();
+    let mut digests = 0usize;
+    let mut pieces_total = 0usize;
+    let mut ocr_ran = 0usize;
+    let tmp_dir = std::env::temp_dir().join("mainstream-mailapp");
+
+    for msg in candidates {
+        let dest = tmp_dir.join(format!("{}.eml", msg.id));
+        let raw = match crate::commands::email_mailapp::fetch_source(account, msg.id, &dest) {
+            Ok(bytes) => bytes,
+            Err(_) => continue,
+        };
+        if let Some((n, ocr)) = ingest_digest(
+            conn,
+            &mailbox,
+            msg.id,
+            &raw,
+            user_email,
+            &known,
+            &cache_dir,
+        )? {
+            digests += 1;
+            pieces_total += n;
+            ocr_ran += ocr;
+        }
+        let _ = std::fs::remove_file(dest);
+    }
+
+    Ok(PhysicalMailSyncResult {
+        digests,
+        pieces: pieces_total,
+        ocr_ran,
+    })
+}
+
 pub(crate) fn sync_informed_delivery(
     conn: &Connection,
     db_path: &Path,
 ) -> Result<PhysicalMailSyncResult, DbError> {
     let settings = read_settings(conn)?;
-    if settings.host.trim().is_empty() || settings.user.trim().is_empty() {
+    if !settings.connected {
         return Err(DbError::Message(
-            "Configure IMAP in Email settings before syncing physical mail.".into(),
+            "Connect Google, Microsoft, or IMAP in Email settings before syncing physical mail."
+                .into(),
         ));
     }
-    let password = load_password(&settings.user)?
-        .ok_or_else(|| DbError::Message("IMAP password missing from Keychain.".into()))?;
+    if settings.auth == "mailapp" {
+        let account = settings.mailapp_account.unwrap_or_default();
+        return sync_informed_delivery_mailapp(conn, db_path, &account, &settings.user);
+    }
 
+    let (mut session, settings) = open_imap_session(conn)?;
     let mailbox = if settings.mailbox.trim().is_empty() {
         "INBOX".to_string()
     } else {
         settings.mailbox.trim().to_string()
     };
-
-    let tls = TlsConnector::builder()
-        .build()
-        .map_err(|e| DbError::Message(format!("TLS init failed: {e}")))?;
-
-    let client = imap::connect(
-        (settings.host.as_str(), settings.port),
-        settings.host.as_str(),
-        &tls,
-    )
-    .map_err(|e| DbError::Message(format!("IMAP connect failed: {e}")))?;
-
-    let mut session = client
-        .login(&settings.user, &password)
-        .map_err(|e| DbError::Message(format!("IMAP login failed: {}", e.0)))?;
 
     session
         .select(&mailbox)
@@ -551,48 +628,18 @@ pub(crate) fn sync_informed_delivery(
 
     for uid in uids {
         let raw = fetch_full_message(&mut session, uid)?;
-        let headers = parse_headers(&raw);
-        if !is_informed_delivery(
-            headers.from_addr.as_deref(),
-            headers.from_name.as_deref(),
-            &headers.subject,
-        ) {
-            continue;
-        }
-
-        let (is_important, score, is_junk) =
-            score_importance(&headers, &settings.user, &known, &mailbox);
-        upsert_email(
+        if let Some((n, ocr)) = ingest_digest(
             conn,
-            uid,
             &mailbox,
-            &headers,
-            is_important,
-            score,
-            is_junk,
-        )?;
-
-        let Some(email_id) = email_row_id(conn, &mailbox, uid)? else {
-            continue;
-        };
-
-        let digest_date = digest_date_from_subject(&headers.subject, headers.date_iso.as_deref());
-        let parsed = extract_pieces_from_digest(&raw, email_id, &cache_dir)?;
-        for p in &parsed {
-            if p.had_vision {
-                ocr_ran += 1;
-            }
-        }
-        let n = replace_mail_pieces(
-            conn,
-            email_id,
-            digest_date.as_deref(),
-            &headers.subject,
-            &parsed,
-        )?;
-        if n > 0 {
+            uid as i64,
+            &raw,
+            &settings.user,
+            &known,
+            &cache_dir,
+        )? {
             digests += 1;
             pieces_total += n;
+            ocr_ran += ocr;
         }
     }
 

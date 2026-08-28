@@ -12,10 +12,17 @@ use std::process::Command;
 use tauri::State;
 
 const KEYCHAIN_SERVICE: &str = "com.mainstream.lifeos.imap";
-const SETTING_HOST: &str = "email.imap_host";
-const SETTING_PORT: &str = "email.imap_port";
-const SETTING_USER: &str = "email.imap_user";
-const SETTING_MAILBOX: &str = "email.imap_mailbox";
+pub(crate) const SETTING_HOST: &str = "email.imap_host";
+pub(crate) const SETTING_PORT: &str = "email.imap_port";
+pub(crate) const SETTING_USER: &str = "email.imap_user";
+pub(crate) const SETTING_MAILBOX: &str = "email.imap_mailbox";
+pub(crate) const SETTING_PROVIDER: &str = "email.provider";
+pub(crate) const SETTING_AUTH: &str = "email.auth";
+pub(crate) const SETTING_MAILAPP_ACCOUNT: &str = "email.mailapp_account";
+pub(crate) const SETTING_GOOGLE_CLIENT_ID: &str = "email.google_client_id";
+pub(crate) const SETTING_MICROSOFT_CLIENT_ID: &str = "email.microsoft_client_id";
+
+pub(crate) type ImapSession = imap::Session<native_tls::TlsStream<std::net::TcpStream>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,11 +49,19 @@ pub struct EmailMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmailSettings {
+    pub provider: String,
+    pub auth: String,
     pub host: String,
     pub port: u16,
     pub user: String,
     pub mailbox: String,
     pub has_password: bool,
+    pub has_oauth: bool,
+    pub connected: bool,
+    pub display_name: Option<String>,
+    pub mailapp_account: Option<String>,
+    pub google_client_id: String,
+    pub microsoft_client_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,6 +81,28 @@ pub struct EmailSyncResult {
     pub fetched: usize,
     pub important: usize,
     pub mailbox: String,
+}
+
+pub(crate) fn apply_provider_defaults(provider: &str) -> (&'static str, u16) {
+    match provider {
+        "microsoft" => ("outlook.office365.com", 993),
+        _ => ("imap.gmail.com", 993),
+    }
+}
+
+pub(crate) fn infer_provider_from_host(host: &str) -> String {
+    let host = host.trim().to_ascii_lowercase();
+    if host.contains("gmail") {
+        "google".into()
+    } else if host.contains("outlook") || host.contains("office365") || host.contains("hotmail") {
+        "microsoft".into()
+    } else if host.contains("mail.app") {
+        "mailapp".into()
+    } else if host.is_empty() {
+        String::new()
+    } else {
+        "imap".into()
+    }
 }
 
 pub(crate) struct ParsedHeaders {
@@ -123,18 +160,90 @@ pub(crate) fn read_settings(conn: &Connection) -> Result<EmailSettings, DbError>
     let port = get_setting(conn, SETTING_PORT)?
         .and_then(|p| p.parse::<u16>().ok())
         .unwrap_or(993);
+    let stored_provider = get_setting(conn, SETTING_PROVIDER)?.unwrap_or_default();
+    let stored_auth = get_setting(conn, SETTING_AUTH)?.unwrap_or_default();
+    let mailapp_account = get_setting(conn, SETTING_MAILAPP_ACCOUNT)?
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let google_client_id = get_setting(conn, SETTING_GOOGLE_CLIENT_ID)?.unwrap_or_default();
+    let microsoft_client_id = get_setting(conn, SETTING_MICROSOFT_CLIENT_ID)?.unwrap_or_default();
+
+    let mut provider = if stored_provider.trim().is_empty() {
+        infer_provider_from_host(&host)
+    } else {
+        stored_provider.trim().to_string()
+    };
+    if provider.is_empty() && mailapp_account.is_some() {
+        provider = "mailapp".into();
+    }
+
+    let has_oauth = matches!(provider.as_str(), "google" | "microsoft")
+        && crate::commands::email_oauth::has_oauth_tokens(&provider);
     let has_password = if user.is_empty() {
         false
     } else {
         load_password(&user)?.is_some()
     };
+
+    let auth = if !stored_auth.trim().is_empty() {
+        stored_auth.trim().to_string()
+    } else if mailapp_account.is_some() {
+        "mailapp".into()
+    } else if has_oauth {
+        "oauth".into()
+    } else {
+        "password".into()
+    };
+
+    let connected = match auth.as_str() {
+        "oauth" => has_oauth && !user.trim().is_empty(),
+        "mailapp" => mailapp_account.is_some(),
+        _ => !host.trim().is_empty() && !user.trim().is_empty() && has_password,
+    };
+    let display_name = if !user.trim().is_empty() {
+        Some(user.clone())
+    } else {
+        mailapp_account.clone()
+    };
+
     Ok(EmailSettings {
+        provider,
+        auth,
         host,
         port,
         user,
         mailbox,
         has_password,
+        has_oauth,
+        connected,
+        display_name,
+        mailapp_account,
+        google_client_id,
+        microsoft_client_id,
     })
+}
+
+pub(crate) fn email_is_configured(conn: &Connection) -> bool {
+    read_settings(conn).map(|s| s.connected).unwrap_or(false)
+}
+
+fn web_message_url(provider: &str, message_id: &Option<String>) -> Option<String> {
+    let mid = message_id.as_ref()?.trim();
+    if mid.is_empty() {
+        return None;
+    }
+    let stripped = mid.trim_matches(|c| c == '<' || c == '>');
+    match provider {
+        "google" => Some(format!(
+            "https://mail.google.com/mail/u/0/#search/rfc822msgid:{}",
+            urlencoding::encode(stripped)
+        )),
+        "microsoft" => Some(format!(
+            "https://outlook.office.com/mail/?search={}",
+            urlencoding::encode(stripped)
+        )),
+        _ => None,
+    }
 }
 
 fn message_url_for(message_id: &Option<String>) -> Option<String> {
@@ -403,7 +512,7 @@ pub(crate) fn score_importance(
 
 pub(crate) fn upsert_email(
     conn: &Connection,
-    uid: u32,
+    uid: i64,
     mailbox: &str,
     headers: &ParsedHeaders,
     important: bool,
@@ -434,7 +543,7 @@ pub(crate) fn upsert_email(
             message_url = excluded.message_url,
             synced_at = excluded.synced_at",
         params![
-            uid as i64,
+            uid,
             mailbox,
             headers.message_id,
             headers.from_addr,
@@ -503,16 +612,18 @@ fn fetch_header_bytes(fetch: &Fetch) -> Option<Vec<u8>> {
     fetch.body().map(|b| b.to_vec())
 }
 
-pub(crate) fn sync_imap(conn: &Connection) -> Result<EmailSyncResult, DbError> {
+pub(crate) fn open_imap_session(conn: &Connection) -> Result<(ImapSession, EmailSettings), DbError> {
     let settings = read_settings(conn)?;
-    if settings.host.trim().is_empty() || settings.user.trim().is_empty() {
+    if settings.auth == "mailapp" {
         return Err(DbError::Message(
-            "Configure IMAP host and username in Email settings first.".into(),
+            "This mailbox is connected through Mail.app.".into(),
         ));
     }
-    let password = load_password(&settings.user)?.ok_or_else(|| {
-        DbError::Message("IMAP password missing from Keychain — save it in Email settings.".into())
-    })?;
+    if settings.host.trim().is_empty() || settings.user.trim().is_empty() {
+        return Err(DbError::Message(
+            "Connect Google, Microsoft, or IMAP in Email settings first.".into(),
+        ));
+    }
 
     let mailbox = if settings.mailbox.trim().is_empty() {
         "INBOX".to_string()
@@ -528,13 +639,45 @@ pub(crate) fn sync_imap(conn: &Connection) -> Result<EmailSyncResult, DbError> {
     let tls = TlsConnector::builder()
         .build()
         .map_err(|e| DbError::Message(format!("TLS init failed: {e}")))?;
-
-    let client = imap::connect((settings.host.as_str(), settings.port), settings.host.as_str(), &tls)
+    let port = if settings.port == 0 { 993 } else { settings.port };
+    let client = imap::connect((settings.host.as_str(), port), settings.host.as_str(), &tls)
         .map_err(|e| DbError::Message(format!("IMAP connect failed: {e}")))?;
 
-    let mut session = client
-        .login(&settings.user, &password)
-        .map_err(|e| DbError::Message(format!("IMAP login failed: {}", e.0)))?;
+    let session = if settings.auth == "oauth" || settings.has_oauth {
+        let provider = if settings.provider == "microsoft" {
+            "microsoft"
+        } else {
+            "google"
+        };
+        let token = crate::commands::email_oauth::ensure_access_token(conn, provider)?;
+        let auth = crate::commands::email_oauth::XOAuth2 {
+            user: settings.user.clone(),
+            token,
+        };
+        client
+            .authenticate("XOAUTH2", &auth)
+            .map_err(|e| DbError::Message(format!("IMAP sign-in failed: {}", e.0)))?
+    } else {
+        let password = load_password(&settings.user)?.ok_or_else(|| {
+            DbError::Message(
+                "IMAP password missing from Keychain — save it in Email settings.".into(),
+            )
+        })?;
+        client
+            .login(&settings.user, &password)
+            .map_err(|e| DbError::Message(format!("IMAP login failed: {}", e.0)))?
+    };
+    Ok((session, settings))
+}
+
+pub(crate) fn sync_imap(conn: &Connection) -> Result<EmailSyncResult, DbError> {
+    let (mut session, settings) = open_imap_session(conn)?;
+
+    let mailbox = if settings.mailbox.trim().is_empty() {
+        "INBOX".to_string()
+    } else {
+        settings.mailbox.trim().to_string()
+    };
 
     // Skip obvious junk folders if the configured mailbox is INBOX — we only sync the chosen mailbox.
     session
@@ -593,7 +736,7 @@ pub(crate) fn sync_imap(conn: &Connection) -> Result<EmailSyncResult, DbError> {
                 }
                 let (is_important, score, is_junk) =
                     score_importance(&headers, &settings.user, &known, &mailbox);
-                upsert_email(conn, uid, &mailbox, &headers, is_important, score, is_junk)?;
+                upsert_email(conn, uid as i64, &mailbox, &headers, is_important, score, is_junk)?;
                 fetched += 1;
                 if is_important {
                     important += 1;
@@ -629,6 +772,15 @@ pub(crate) fn sync_imap(conn: &Connection) -> Result<EmailSyncResult, DbError> {
     })
 }
 
+pub(crate) fn sync_mailbox(conn: &Connection) -> Result<EmailSyncResult, DbError> {
+    let settings = read_settings(conn)?;
+    if settings.auth == "mailapp" {
+        crate::commands::email_mailapp::sync_mailapp_inbox(conn)
+    } else {
+        sync_imap(conn)
+    }
+}
+
 #[tauri::command]
 pub fn get_email_settings(state: State<'_, DbState>) -> Result<EmailSettings, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
@@ -660,6 +812,9 @@ pub fn save_email_settings(
     set_setting(db.conn(), SETTING_PORT, &port.to_string())?;
     set_setting(db.conn(), SETTING_USER, user)?;
     set_setting(db.conn(), SETTING_MAILBOX, mailbox)?;
+    set_setting(db.conn(), SETTING_PROVIDER, &infer_provider_from_host(host))?;
+    set_setting(db.conn(), SETTING_AUTH, "password")?;
+    set_setting(db.conn(), SETTING_MAILAPP_ACCOUNT, "")?;
 
     if let Some(password) = input.password.as_deref() {
         let password = password.trim();
@@ -678,7 +833,26 @@ pub fn save_email_settings(
 #[tauri::command]
 pub fn sync_email(state: State<'_, DbState>) -> Result<EmailSyncResult, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
-    sync_imap(db.conn())
+    sync_mailbox(db.conn())
+}
+
+#[tauri::command]
+pub fn disconnect_email(state: State<'_, DbState>) -> Result<EmailSettings, DbError> {
+    let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
+    let previous = read_settings(db.conn())?;
+    if !previous.user.is_empty() {
+        let _ = delete_password(&previous.user);
+    }
+    let _ = crate::commands::email_oauth::delete_tokens("google");
+    let _ = crate::commands::email_oauth::delete_tokens("microsoft");
+    set_setting(db.conn(), SETTING_HOST, "")?;
+    set_setting(db.conn(), SETTING_PORT, "993")?;
+    set_setting(db.conn(), SETTING_USER, "")?;
+    set_setting(db.conn(), SETTING_MAILBOX, "INBOX")?;
+    set_setting(db.conn(), SETTING_PROVIDER, "")?;
+    set_setting(db.conn(), SETTING_AUTH, "")?;
+    set_setting(db.conn(), SETTING_MAILAPP_ACCOUNT, "")?;
+    read_settings(db.conn())
 }
 
 #[tauri::command]
@@ -708,6 +882,7 @@ pub fn open_email(state: State<'_, DbState>, id: i64) -> Result<(), DbError> {
         .query_row(params![id], |row| Ok((row.get(0)?, row.get(1)?)))
         .map_err(|_| DbError::Message(format!("email {id} not found")))?;
     drop(stmt);
+    let provider = get_setting(db.conn(), SETTING_PROVIDER)?.unwrap_or_default();
     drop(db);
 
     let url = message_url.or_else(|| message_url_for(&message_id));
@@ -715,9 +890,14 @@ pub fn open_email(state: State<'_, DbState>, id: i64) -> Result<(), DbError> {
         // Prefer message:// so Mail.app jumps to the message when it has it indexed.
         match open_with_system("url", &url) {
             Ok(()) => return Ok(()),
-            Err(_) => {
-                // Fall through to opening Mail.app.
-            }
+            Err(_) => {}
+        }
+    }
+
+    if let Some(web) = web_message_url(&provider, &message_id) {
+        match open_with_system("url", &web) {
+            Ok(()) => return Ok(()),
+            Err(_) => {}
         }
     }
 
@@ -732,5 +912,31 @@ pub fn open_email(state: State<'_, DbState>, id: i64) -> Result<(), DbError> {
         Err(DbError::Message(format!(
             "open Mail.app exited with status {status}"
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn infers_gmail_and_microsoft_hosts() {
+        assert_eq!(infer_provider_from_host("imap.gmail.com"), "google");
+        assert_eq!(infer_provider_from_host("outlook.office365.com"), "microsoft");
+        assert_eq!(infer_provider_from_host("imap.mail.me.com"), "imap");
+        assert_eq!(apply_provider_defaults("microsoft"), ("outlook.office365.com", 993));
+        assert_eq!(apply_provider_defaults("google"), ("imap.gmail.com", 993));
+    }
+
+    #[test]
+    fn web_fallback_urls_use_rfc822_search() {
+        let mid = Some("<abc@gmail.com>".into());
+        let google = web_message_url("google", &mid).expect("google url");
+        assert!(google.contains("mail.google.com"));
+        assert!(google.contains("rfc822msgid:"));
+        assert!(web_message_url("microsoft", &mid)
+            .expect("microsoft url")
+            .contains("outlook.office.com"));
+        assert!(web_message_url("imap", &mid).is_none());
     }
 }

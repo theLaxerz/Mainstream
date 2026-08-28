@@ -52,9 +52,7 @@ export function MailSection({ limit = 12 }: Props) {
 
   async function loadList() {
     const settings = await getEmailSettings();
-    const ready = Boolean(
-      settings.host && settings.user && settings.hasPassword,
-    );
+    const ready = Boolean(settings.connected);
     setConfigured(ready);
     if (!ready) {
       setPieces([]);
@@ -112,10 +110,10 @@ export function MailSection({ limit = 12 }: Props) {
         {!configured ? (
           <PermissionCallout
             title="Connect email first"
-            body="Physical mail is read from USPS Informed Delivery digests in your synced inbox. Set up IMAP under Email, then sync here."
+            body="Physical mail is read from USPS Informed Delivery digests in your synced inbox. Connect Google, Microsoft, or IMAP under Email, then sync here."
             steps={[
               "Subscribe to Informed Delivery at usps.com",
-              "Use the same mailbox in Email settings",
+              "Use the same mailbox you connected in Email",
               "Sync Mail to pull digests and OCR envelope scans",
             ]}
             actionLabel="Open Email module"

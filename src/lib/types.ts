@@ -78,11 +78,32 @@ export type EmailMessage = {
 };
 
 export type EmailSettings = {
+  provider: string;
+  auth: string;
   host: string;
   port: number;
   user: string;
   mailbox: string;
   hasPassword: boolean;
+  hasOauth: boolean;
+  connected: boolean;
+  displayName: string | null;
+  mailappAccount: string | null;
+  googleClientId: string;
+  microsoftClientId: string;
+};
+
+export type MailAppAccount = {
+  name: string;
+  userName: string;
+  kind: string;
+  accountType: string;
+};
+
+export type MailAppAccountsResult = {
+  status: string;
+  detail: string | null;
+  accounts: MailAppAccount[];
 };
 
 export type EmailSyncResult = {
