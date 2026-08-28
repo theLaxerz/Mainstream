@@ -64,6 +64,20 @@ The **Mail** module searches your synced mailbox for USPS Informed Delivery dige
 
 SQLite lives in the app data directory as `app.db` (created on first launch).
 
+## What's next
+
+v1 already covers the command-center loop: modules, layout, unified refresh, and Calendar. The next increment (this branch) makes the **hero feel alive** — digital time + greeting, EventKit dots/agenda on the month grid, and a Today briefing that jumps to Messages, Calendar, Email, and Health.
+
+Suggested follow-ups, in roughly this order:
+
+1. **Weather in the hero** — local conditions via Open-Meteo (no API key), sitting beside the clock.
+2. **⌘K command palette** — jump to a module, open a shortcut, or capture a note without leaving the keyboard.
+3. **Quiet auto-refresh** — interval sync with per-module last-synced timestamps instead of only a manual Refresh all.
+4. **Dusk theme** — time-of-day palette (and a manual toggle) so the glass cards work at night.
+5. **Health sparklines** — steps/sleep as a 7-day chart, not just a list of days.
+6. **Tonight on streaming** — one cinema-style featured title above the hot/new lists.
+7. **Deeper Messages / finance** — in-app reply is still out of scope; charts and better CSV mapping would help the ledger before any bank API.
+
 ## Known limits (v1)
 
 - macOS only

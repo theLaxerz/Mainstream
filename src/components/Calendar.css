@@ -160,8 +160,92 @@
   background: var(--accent);
 }
 
+.calendar-day.has-events .calendar-day-dot {
+  background: var(--teal);
+}
+
+.calendar-day.is-today.has-events .calendar-day-dot {
+  background: var(--accent);
+}
+
 .calendar-day.is-selected .calendar-day-dot {
   background: rgba(255, 255, 255, 0.9);
+}
+
+.calendar-agenda {
+  margin-top: 0.75rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid rgba(18, 38, 44, 0.08);
+  min-height: 4.4rem;
+}
+
+.calendar-agenda-label {
+  margin: 0 0 0.4rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.calendar-agenda-empty {
+  margin: 0;
+  font-size: 0.86rem;
+  color: var(--ink-faint);
+  font-weight: 500;
+}
+
+.calendar-agenda-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+}
+
+.calendar-agenda-item {
+  appearance: none;
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  padding: 0.28rem 0.35rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.calendar-agenda-item:hover {
+  background: rgba(31, 122, 116, 0.1);
+}
+
+.calendar-agenda-time {
+  flex-shrink: 0;
+  min-width: 3.6rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--teal);
+}
+
+.calendar-agenda-title {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.calendar-agenda-more {
+  margin: 0.25rem 0 0;
+  font-size: 0.72rem;
+  font-weight: 650;
+  color: var(--ink-faint);
 }
 
 @keyframes calendar-rise {
@@ -178,5 +262,19 @@
 @media (max-width: 720px) {
   .calendar-panel {
     width: min(100%, 300px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .calendar-panel,
+  .calendar-nav,
+  .calendar-day {
+    animation: none;
+    transition: none;
+  }
+
+  .calendar-nav:hover,
+  .calendar-day.in-month:hover {
+    transform: none;
   }
 }

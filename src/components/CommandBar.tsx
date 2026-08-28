@@ -5,9 +5,15 @@ type Props = {
   onRefresh: () => void;
   onCustomize: () => void;
   refreshing?: boolean;
+  refreshStatus?: string | null;
 };
 
-export function CommandBar({ onRefresh, onCustomize, refreshing }: Props) {
+export function CommandBar({
+  onRefresh,
+  onCustomize,
+  refreshing,
+  refreshStatus,
+}: Props) {
   const [now, setNow] = useState(() => new Date());
   const [compact, setCompact] = useState(false);
 
@@ -59,6 +65,11 @@ export function CommandBar({ onRefresh, onCustomize, refreshing }: Props) {
           <span className="command-bar-clock" aria-live="polite">
             {date} · {time}
           </span>
+          {refreshStatus ? (
+            <span className="command-bar-status" role="status">
+              {refreshStatus}
+            </span>
+          ) : null}
         </div>
         <div className="command-bar-actions">
           <button

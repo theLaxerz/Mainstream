@@ -14,6 +14,7 @@ import { NewsSection } from "../components/NewsSection";
 import { NotesSection } from "../components/NotesSection";
 import { ShortcutsSection } from "../components/ShortcutsSection";
 import { StreamingSection } from "../components/StreamingSection";
+import { TodayBriefing } from "../components/TodayBriefing";
 import { YouTubeSection } from "../components/YouTubeSection";
 import {
   defaultLayout,
@@ -111,6 +112,7 @@ export function Dashboard() {
         onRefresh={onRefresh}
         onCustomize={onCustomize}
         refreshing={refreshing}
+        refreshStatus={refreshStatus}
       />
 
       <header className="dashboard-hero">
@@ -119,8 +121,9 @@ export function Dashboard() {
           <Clock />
           <Calendar />
         </div>
-        <p className="hero-tagline">Your day, gathered in one calm place.</p>
       </header>
+
+      <TodayBriefing />
 
       <div className="dashboard-modules-head">
         <div>
@@ -138,6 +141,7 @@ export function Dashboard() {
         {modules.map((entry, index) => (
           <div
             key={entry.id as ModuleId}
+            id={`module-${entry.id}`}
             className={`dashboard-module-slot placement-${entry.placement}`}
             style={{ animationDelay: `${0.04 + index * 0.045}s` }}
           >
@@ -153,11 +157,6 @@ export function Dashboard() {
       ) : null}
 
       <div className="dashboard-footer">
-        {refreshStatus ? (
-          <p className="dashboard-refresh-status" role="status">
-            {refreshStatus}
-          </p>
-        ) : null}
         <button
           type="button"
           className="btn btn-ghost"

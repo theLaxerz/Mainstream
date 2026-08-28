@@ -96,8 +96,8 @@ pub struct CalendarEventsResult {
     pub events: Vec<CalendarEvent>,
 }
 
-fn fetch_events(days_ahead: i64) -> CalendarEventsResult {
-    match run_calendar_script(0, days_ahead) {
+fn fetch_events(days_back: i64, days_ahead: i64) -> CalendarEventsResult {
+    match run_calendar_script(days_back, days_ahead) {
         Ok(events) => CalendarEventsResult {
             access: CalendarAccess {
                 status: "ok".into(),
@@ -127,10 +127,12 @@ pub fn calendar_access_status() -> CalendarAccess {
 pub fn list_calendar_events(
     limit: Option<i64>,
     days_ahead: Option<i64>,
+    days_back: Option<i64>,
 ) -> CalendarEventsResult {
-    let limit = limit.unwrap_or(12).clamp(1, 100);
+    let limit = limit.unwrap_or(12).clamp(1, 200);
     let days_ahead = days_ahead.unwrap_or(14).clamp(1, 90);
-    let mut result = fetch_events(days_ahead);
+    let days_back = days_back.unwrap_or(0).clamp(0, 90);
+    let mut result = fetch_events(days_back, days_ahead);
     result.events.truncate(limit as usize);
     result
 }

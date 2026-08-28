@@ -54,6 +54,16 @@
   font-weight: 600;
 }
 
+.command-bar-status {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--teal);
+  max-width: 22rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .command-bar-actions {
   display: flex;
   flex-wrap: wrap;
@@ -68,7 +78,8 @@
     padding-right: 1rem;
   }
 
-  .command-bar-clock {
+  .command-bar-clock,
+  .command-bar-status {
     display: none;
   }
 }
