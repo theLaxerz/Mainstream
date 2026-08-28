@@ -1,5 +1,8 @@
 .app-shell {
-  min-height: 100vh;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   isolation: isolate;
 }
 

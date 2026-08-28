@@ -6,12 +6,20 @@
   padding: 0.65rem 1.5rem;
   background: rgba(243, 247, 245, 0.55);
   border-bottom: 1px solid transparent;
-  backdrop-filter: blur(16px) saturate(1.2);
   transition:
     background 0.25s ease,
     border-color 0.25s ease,
     box-shadow 0.25s ease,
     padding 0.25s ease;
+}
+
+.command-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  backdrop-filter: blur(16px) saturate(1.2);
 }
 
 .command-bar.is-compact {

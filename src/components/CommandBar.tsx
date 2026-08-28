@@ -1,5 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./CommandBar.css";
+
+function scrollParentOf(el: HTMLElement | null): Element | Window {
+  let node = el?.parentElement ?? null;
+  while (node) {
+    const { overflowY } = getComputedStyle(node);
+    if (overflowY === "auto" || overflowY === "scroll") return node;
+    node = node.parentElement;
+  }
+  return window;
+}
 
 type Props = {
   onRefresh: () => void;
@@ -8,6 +18,7 @@ type Props = {
 };
 
 export function CommandBar({ onRefresh, onCustomize, refreshing }: Props) {
+  const barRef = useRef<HTMLDivElement>(null);
   const [now, setNow] = useState(() => new Date());
   const [compact, setCompact] = useState(false);
 
@@ -17,10 +28,13 @@ export function CommandBar({ onRefresh, onCustomize, refreshing }: Props) {
   }, []);
 
   useEffect(() => {
-    const onScroll = () => setCompact(window.scrollY > 220);
+    const scroller = scrollParentOf(barRef.current);
+    const readY = () =>
+      scroller instanceof Element ? scroller.scrollTop : window.scrollY;
+    const onScroll = () => setCompact(readY() > 220);
     onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
+    scroller.addEventListener("scroll", onScroll, { passive: true });
+    return () => scroller.removeEventListener("scroll", onScroll);
   }, []);
 
   useEffect(() => {
@@ -52,7 +66,10 @@ export function CommandBar({ onRefresh, onCustomize, refreshing }: Props) {
   }).format(now);
 
   return (
-    <div className={`command-bar ${compact ? "is-compact" : ""}`}>
+    <div
+      ref={barRef}
+      className={`command-bar ${compact ? "is-compact" : ""}`}
+    >
       <div className="command-bar-inner">
         <div className="command-bar-brand">
           <span className="command-bar-mark">Mainstream</span>
