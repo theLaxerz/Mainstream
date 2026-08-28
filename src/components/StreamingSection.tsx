@@ -110,6 +110,12 @@ export function StreamingSection({ limit = 8 }: Props) {
     );
   }
 
+  const featured = hot[0] ?? null;
+  const restHot = featured ? hot.slice(1) : hot;
+  const featuredPoster = featured?.posterPath
+    ? featured.posterPath.replace("/w342", "/w500")
+    : null;
+
   return (
     <>
       <ModuleSection
@@ -147,11 +153,42 @@ export function StreamingSection({ limit = 8 }: Props) {
         {status ? <p className="module-empty">{status}</p> : null}
         {loading ? <p className="module-empty">Loading streaming…</p> : null}
 
+        {featured ? (
+          <button
+            type="button"
+            className="streaming-featured"
+            onClick={() => void openStreamingItem(featured.id)}
+          >
+            {featuredPoster ? (
+              <img
+                className="streaming-featured-poster"
+                src={featuredPoster}
+                alt=""
+              />
+            ) : (
+              <div className="streaming-featured-poster streaming-poster-empty" />
+            )}
+            <div className="streaming-featured-copy">
+              <p className="module-eyebrow">Tonight</p>
+              <p className="streaming-featured-title">{featured.title}</p>
+              {featured.overview ? (
+                <p className="streaming-featured-overview">{featured.overview}</p>
+              ) : null}
+              <p className="module-row-meta">
+                {featured.providerName}
+                {featured.releaseDate ? ` · ${featured.releaseDate}` : ""}
+              </p>
+            </div>
+          </button>
+        ) : null}
+
         <p className="module-eyebrow finance-subhead">What's hot</p>
-        {hot.length === 0 ? (
+        {restHot.length === 0 && !featured ? (
           <p className="module-empty">Sync to load trending picks.</p>
+        ) : restHot.length === 0 ? (
+          <p className="module-empty">More trending titles appear here after sync.</p>
         ) : (
-          <ul className="module-list">{hot.map(row)}</ul>
+          <ul className="module-list">{restHot.map(row)}</ul>
         )}
 
         <p className="module-eyebrow finance-subhead">New & available</p>

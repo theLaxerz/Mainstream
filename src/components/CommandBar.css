@@ -4,7 +4,7 @@
   z-index: 30;
   margin: 0 -1.5rem 1rem;
   padding: 0.65rem 1.5rem;
-  background: rgba(243, 247, 245, 0.55);
+  background: var(--command-bar-bg);
   border-bottom: 1px solid transparent;
   transition:
     background 0.25s ease,
@@ -23,7 +23,7 @@
 }
 
 .command-bar.is-compact {
-  background: rgba(243, 247, 245, 0.88);
+  background: var(--command-bar-bg-compact);
   border-bottom-color: var(--line);
   box-shadow: 0 10px 30px rgba(15, 42, 51, 0.08);
   padding-top: 0.55rem;
@@ -60,6 +60,16 @@
   color: var(--ink-faint);
   font-size: 0.86rem;
   font-weight: 600;
+}
+
+.command-bar-status {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink-faint);
+  max-width: 18rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .command-bar-actions {
