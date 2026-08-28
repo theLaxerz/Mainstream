@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
+import { formatSyncedAgo, useModuleSync } from "../lib/syncStatus";
 import "./ModuleSection.css";
 
 type Props = {
@@ -36,6 +37,20 @@ export function ModuleSection({
   count,
   accent = "teal",
 }: Props) {
+  const sync = useModuleSync();
+  const ago =
+    sync && (sync.status === "ok" || sync.status === "error")
+      ? formatSyncedAgo(sync.at)
+      : null;
+  const syncLabel =
+    sync?.status === "error"
+      ? ago
+        ? `Error · ${ago}`
+        : "Sync error"
+      : ago
+        ? `Synced ${ago}`
+        : null;
+
   return (
     <section
       className={`module accent-${accent} ${className}`.trim()}
@@ -52,6 +67,7 @@ export function ModuleSection({
               </span>
             ) : null}
           </div>
+          {syncLabel ? <p className="module-synced">{syncLabel}</p> : null}
         </div>
         {action ? <div className="module-action">{action}</div> : null}
       </header>

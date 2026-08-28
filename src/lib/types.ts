@@ -204,3 +204,24 @@ export type DashboardRefreshResult = {
   finishedAt: string;
   modules: ModuleRefreshResult[];
 };
+
+export type WeatherPlace = {
+  name: string;
+  latitude: number;
+  longitude: number;
+  admin: string | null;
+  country: string | null;
+  units: string;
+};
+
+export type WeatherSnapshot = {
+  place: WeatherPlace;
+  temperature: number;
+  high: number | null;
+  low: number | null;
+  weatherCode: number;
+  condition: string;
+  humidity: number | null;
+  windSpeed: number | null;
+  fetchedAt: string;
+};

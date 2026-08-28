@@ -14,10 +14,22 @@ function scrollParentOf(el: HTMLElement | null): Element | Window {
 type Props = {
   onRefresh: () => void;
   onCustomize: () => void;
+  onPalette: () => void;
+  onToggleTheme: () => void;
+  themeLabel: string;
   refreshing?: boolean;
+  refreshStatus?: string | null;
 };
 
-export function CommandBar({ onRefresh, onCustomize, refreshing }: Props) {
+export function CommandBar({
+  onRefresh,
+  onCustomize,
+  onPalette,
+  onToggleTheme,
+  themeLabel,
+  refreshing,
+  refreshStatus,
+}: Props) {
   const barRef = useRef<HTMLDivElement>(null);
   const [now, setNow] = useState(() => new Date());
   const [compact, setCompact] = useState(false);
@@ -48,10 +60,14 @@ export function CommandBar({ onRefresh, onCustomize, refreshing }: Props) {
         e.preventDefault();
         onCustomize();
       }
+      if (meta && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        onPalette();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onRefresh, onCustomize]);
+  }, [onRefresh, onCustomize, onPalette]);
 
   const time = new Intl.DateTimeFormat(undefined, {
     hour: "numeric",
@@ -76,8 +92,30 @@ export function CommandBar({ onRefresh, onCustomize, refreshing }: Props) {
           <span className="command-bar-clock" aria-live="polite">
             {date} · {time}
           </span>
+          {refreshStatus ? (
+            <span className="command-bar-status" role="status">
+              {refreshStatus}
+            </span>
+          ) : null}
         </div>
         <div className="command-bar-actions">
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={onPalette}
+            title="Command palette (⌘K)"
+            aria-label="Open command palette"
+          >
+            Search
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={onToggleTheme}
+            title="Cycle theme: auto, dusk, light"
+          >
+            {themeLabel}
+          </button>
           <button
             type="button"
             className="btn btn-ghost"
