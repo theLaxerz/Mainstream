@@ -1,9 +1,13 @@
 //! USPS Informed Delivery — parse digest emails, extract scans, OCR on macOS.
 
 use crate::commands::email::{
-    load_known_contacts, load_password, parse_headers, read_settings, score_importance, upsert_email,
+    load_known_contacts, load_password, parse_headers, read_settings, score_importance,
+    upsert_email,
 };
 use crate::db::{now_iso, DbError, DbState};
+use crate::security::{
+    max_http_response_bytes, parse_public_https_url, path_is_within, public_http_client,
+};
 use mailparse::MailHeaderMap;
 use native_tls::TlsConnector;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -221,7 +225,9 @@ fn base64_decode(input: &str) -> Option<Vec<u8>> {
 fn resolve_image_bytes(src: &str, inline: &HashMap<String, Vec<u8>>) -> Option<Vec<u8>> {
     let src = src.trim();
     if src.starts_with("cid:") {
-        let key = src.trim_start_matches("cid:").trim_matches(|c| c == '<' || c == '>');
+        let key = src
+            .trim_start_matches("cid:")
+            .trim_matches(|c| c == '<' || c == '>');
         return inline.get(key).cloned();
     }
     if src.starts_with("data:image/") {
@@ -284,7 +290,9 @@ fn merge_ocr(alt: &str, vision: Option<&str>) -> String {
     let alt = alt.trim();
     let generic = alt.is_empty()
         || alt.eq_ignore_ascii_case("image")
-        || alt.to_ascii_lowercase().contains("scanned image of your mail");
+        || alt
+            .to_ascii_lowercase()
+            .contains("scanned image of your mail");
 
     if let Some(v) = vision {
         let v = v.trim();
@@ -321,16 +329,18 @@ struct ParsedPiece {
 }
 
 fn fetch_url_bytes(url: &str) -> Option<Vec<u8>> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(12))
-        .build()
-        .ok()?;
+    let url = parse_public_https_url(url).ok()?;
+    let client = public_http_client(12, None).ok()?;
     let resp = client.get(url).send().ok()?;
     if !resp.status().is_success() {
         return None;
     }
+    let len = resp.content_length().unwrap_or(0);
+    if len > max_http_response_bytes() {
+        return None;
+    }
     let bytes = resp.bytes().ok()?;
-    if bytes.len() < 1024 {
+    if bytes.len() < 1024 || bytes.len() as u64 > max_http_response_bytes() {
         return None;
     }
     Some(bytes.to_vec())
@@ -355,7 +365,7 @@ fn extract_pieces_from_digest(
 
     for (idx, (src, alt)) in img_tags.iter().enumerate() {
         let bytes = resolve_image_bytes(src, &bundle.inline_images).or_else(|| {
-            if src.starts_with("http://") || src.starts_with("https://") {
+            if src.starts_with("https://") {
                 fetch_url_bytes(src)
             } else {
                 None
@@ -562,15 +572,7 @@ pub(crate) fn sync_informed_delivery(
 
         let (is_important, score, is_junk) =
             score_importance(&headers, &settings.user, &known, &mailbox);
-        upsert_email(
-            conn,
-            uid,
-            &mailbox,
-            &headers,
-            is_important,
-            score,
-            is_junk,
-        )?;
+        upsert_email(conn, uid, &mailbox, &headers, is_important, score, is_junk)?;
 
         let Some(email_id) = email_row_id(conn, &mailbox, uid)? else {
             continue;
@@ -651,14 +653,21 @@ pub fn physical_mail_image_base64(
     id: i64,
 ) -> Result<Option<String>, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
-    let mut stmt = db.conn().prepare("SELECT image_path FROM mail_pieces WHERE id = ?1")?;
-    let path: Option<String> = stmt
-        .query_row(params![id], |row| row.get(0))
-        .optional()?;
+    let mut stmt = db
+        .conn()
+        .prepare("SELECT image_path FROM mail_pieces WHERE id = ?1")?;
+    let path: Option<String> = stmt.query_row(params![id], |row| row.get(0)).optional()?;
     let Some(path) = path.filter(|p| !p.is_empty()) else {
         return Ok(None);
     };
-    let bytes = fs::read(&path).map_err(DbError::Io)?;
+    let requested = PathBuf::from(&path);
+    let cache = cache_dir_for(db.path());
+    if !path_is_within(&cache, &requested) {
+        return Err(DbError::Message(
+            "mail image path is outside the cache directory".into(),
+        ));
+    }
+    let bytes = fs::read(&requested).map_err(DbError::Io)?;
     if bytes.is_empty() {
         return Ok(None);
     }

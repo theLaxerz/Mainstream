@@ -2,6 +2,7 @@
 
 use crate::commands::open::open_with_system;
 use crate::db::{now_iso, DbError, DbState};
+use crate::security::public_http_client;
 use chrono::{DateTime, Utc};
 use feed_rs::parser;
 use rusqlite::{params, Connection};
@@ -47,11 +48,7 @@ pub struct UpsertYoutubePrefInput {
 }
 
 fn http_client() -> Result<reqwest::blocking::Client, DbError> {
-    reqwest::blocking::Client::builder()
-        .user_agent("MainstreamLifeOS/0.1 (+local; YouTube RSS)")
-        .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .map_err(|e| DbError::Message(format!("http client: {e}")))
+    public_http_client(20, Some("MainstreamLifeOS/0.1 (+local; YouTube RSS)"))
 }
 
 fn normalize_channel_id(raw: &str) -> String {
@@ -59,7 +56,11 @@ fn normalize_channel_id(raw: &str) -> String {
     if s.contains("channel/") {
         if let Some(idx) = s.rfind("channel/") {
             let rest = &s[idx + 8..];
-            return rest.split(&['/', '?', '&'][..]).next().unwrap_or(rest).to_string();
+            return rest
+                .split(&['/', '?', '&'][..])
+                .next()
+                .unwrap_or(rest)
+                .to_string();
         }
     }
     if s.starts_with("UC") && s.len() >= 20 {
@@ -80,7 +81,10 @@ fn video_id_from_url(url: &str) -> Option<String> {
         return Some(v.split('&').next()?.to_string());
     }
     if url.contains("/shorts/") {
-        return url.split("/shorts/").nth(1).map(|s| s.split('?').next().unwrap_or(s).to_string());
+        return url
+            .split("/shorts/")
+            .nth(1)
+            .map(|s| s.split('?').next().unwrap_or(s).to_string());
     }
     None
 }
@@ -88,9 +92,9 @@ fn video_id_from_url(url: &str) -> Option<String> {
 #[tauri::command]
 pub fn list_youtube_prefs(state: State<'_, DbState>) -> Result<Vec<YoutubePref>, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
-    let mut stmt = db.conn().prepare(
-        "SELECT id, channel_id, title, enabled FROM youtube_prefs ORDER BY id ASC",
-    )?;
+    let mut stmt = db
+        .conn()
+        .prepare("SELECT id, channel_id, title, enabled FROM youtube_prefs ORDER BY id ASC")?;
     let rows = stmt
         .query_map([], |row| {
             Ok(YoutubePref {

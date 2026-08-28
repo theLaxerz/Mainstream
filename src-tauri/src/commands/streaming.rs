@@ -119,10 +119,7 @@ pub(crate) fn load_api_key(conn: &Connection) -> Result<String, DbError> {
 }
 
 pub(crate) fn load_enabled_providers(conn: &Connection) -> Vec<String> {
-    let defaults: Vec<String> = default_providers()
-        .iter()
-        .map(|p| p.id.clone())
-        .collect();
+    let defaults: Vec<String> = default_providers().iter().map(|p| p.id.clone()).collect();
     let Ok(Some(json)) = get_setting(conn, SETTING_PROVIDERS) else {
         return defaults;
     };
@@ -148,7 +145,7 @@ fn tmdb_get(client: &reqwest::blocking::Client, path: &str, key: &str) -> Result
         .json()
         .map_err(|e| DbError::Message(format!("tmdb json: {e}")))?;
     if !status.is_success() {
-        return Err(DbError::Message(format!("TMDB error ({status}): {body}")));
+        return Err(DbError::Message(format!("TMDB error ({status})")));
     }
     Ok(body)
 }
@@ -273,7 +270,9 @@ pub(crate) fn run_refresh_streaming(state: &DbState) -> Result<StreamingRefreshR
     let fetched_at = now_iso();
     let mut upserted = 0usize;
     let mut errors = Vec::new();
-    let since = (Utc::now() - Duration::days(30)).format("%Y-%m-%d").to_string();
+    let since = (Utc::now() - Duration::days(30))
+        .format("%Y-%m-%d")
+        .to_string();
 
     for pid in &enabled {
         let Some(provider) = provider_by_id(pid) else {
@@ -348,11 +347,7 @@ pub(crate) fn run_refresh_streaming(state: &DbState) -> Result<StreamingRefreshR
     })
 }
 
-fn list_by_kind(
-    conn: &Connection,
-    kind: &str,
-    limit: i64,
-) -> Result<Vec<StreamingItem>, DbError> {
+fn list_by_kind(conn: &Connection, kind: &str, limit: i64) -> Result<Vec<StreamingItem>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT id, provider_id, provider_name, kind, tmdb_id, media_type, title, overview,
                 poster_path, release_date, score, fetched_at

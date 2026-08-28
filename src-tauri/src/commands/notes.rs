@@ -31,7 +31,7 @@ pub struct UpdateNoteInput {
 #[tauri::command]
 pub fn list_notes(state: State<'_, DbState>, limit: Option<i64>) -> Result<Vec<Note>, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
-    let limit = limit.unwrap_or(100);
+    let limit = limit.unwrap_or(100).clamp(1, 500);
     let mut stmt = db.conn().prepare(
         "SELECT id, title, body, created_at, updated_at
          FROM notes
@@ -55,9 +55,9 @@ pub fn list_notes(state: State<'_, DbState>, limit: Option<i64>) -> Result<Vec<N
 #[tauri::command]
 pub fn get_note(state: State<'_, DbState>, id: i64) -> Result<Option<Note>, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
-    let mut stmt = db.conn().prepare(
-        "SELECT id, title, body, created_at, updated_at FROM notes WHERE id = ?1",
-    )?;
+    let mut stmt = db
+        .conn()
+        .prepare("SELECT id, title, body, created_at, updated_at FROM notes WHERE id = ?1")?;
     let mut rows = stmt.query(params![id])?;
     if let Some(row) = rows.next()? {
         Ok(Some(Note {
@@ -136,9 +136,8 @@ pub fn delete_note(state: State<'_, DbState>, id: i64) -> Result<(), DbError> {
 }
 
 fn get_note_inner(conn: &rusqlite::Connection, id: i64) -> Result<Option<Note>, DbError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, title, body, created_at, updated_at FROM notes WHERE id = ?1",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT id, title, body, created_at, updated_at FROM notes WHERE id = ?1")?;
     let mut rows = stmt.query(params![id])?;
     if let Some(row) = rows.next()? {
         Ok(Some(Note {

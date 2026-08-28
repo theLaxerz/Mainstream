@@ -405,9 +405,19 @@
   line-height: 1.4;
 }
 
-.email-connector-hint a {
+.email-connector-hint a,
+.email-connector-hint .link-button {
   color: var(--teal);
   font-weight: 600;
+}
+
+.link-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
 }
 
 @keyframes module-in {

@@ -79,9 +79,9 @@ fn unavailable_result(detail: impl Into<String>) -> UnreadMessagesResult {
 /// Copy chat.db (+ WAL/SHM when present) into a private temp dir so we can read
 /// while Messages.app holds the live database open.
 fn stage_chat_db(src: &Path) -> Result<PathBuf, DbError> {
-    let parent = src.parent().ok_or_else(|| {
-        DbError::Message("invalid Messages database path".into())
-    })?;
+    let parent = src
+        .parent()
+        .ok_or_else(|| DbError::Message("invalid Messages database path".into()))?;
 
     let staging = std::env::temp_dir().join(format!(
         "mainstream-messages-{}-{}",
@@ -89,9 +89,19 @@ fn stage_chat_db(src: &Path) -> Result<PathBuf, DbError> {
         Utc::now().timestamp_millis()
     ));
     fs::create_dir_all(&staging)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&staging, fs::Permissions::from_mode(0o700))?;
+    }
 
     let dst = staging.join("chat.db");
     fs::copy(src, &dst)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&dst, fs::Permissions::from_mode(0o600));
+    }
 
     for suffix in ["chat.db-wal", "chat.db-shm"] {
         let side = parent.join(suffix);
@@ -151,7 +161,9 @@ fn extract_from_attributed_body(blob: &[u8]) -> Option<String> {
                 end += 1;
             }
             if end > start + 1 {
-                let s = String::from_utf8_lossy(&blob[start..end]).trim().to_string();
+                let s = String::from_utf8_lossy(&blob[start..end])
+                    .trim()
+                    .to_string();
                 if !s.is_empty() && s != "NSString" && s != "NSDictionary" {
                     return Some(s);
                 }
@@ -230,10 +242,7 @@ fn query_unread(conn: &Connection, limit: Option<i64>) -> Result<Vec<UnreadMessa
         "IFNULL(m.date_read, 0) = 0"
     };
 
-    let mut filters = vec![
-        "m.is_from_me = 0".to_string(),
-        unread_clause.to_string(),
-    ];
+    let mut filters = vec!["m.is_from_me = 0".to_string(), unread_clause.to_string()];
     if has_item_type {
         filters.push("IFNULL(m.item_type, 0) = 0".into());
     }
@@ -247,11 +256,7 @@ fn query_unread(conn: &Connection, limit: Option<i64>) -> Result<Vec<UnreadMessa
         "CASE WHEN c.chat_identifier LIKE 'chat%' THEN 1 ELSE 0 END"
     };
 
-    let limit_sql = if limit.is_some() {
-        "LIMIT ?1"
-    } else {
-        ""
-    };
+    let limit_sql = if limit.is_some() { "LIMIT ?1" } else { "" };
 
     let sql = format!(
         "SELECT
@@ -394,14 +399,14 @@ fn load_unread(limit: Option<i64>) -> UnreadMessagesResult {
 /// [`list_all_unread_messages`] for the full list.
 #[tauri::command]
 pub fn list_unread_messages(limit: Option<i64>) -> UnreadMessagesResult {
-    let limit = limit.unwrap_or(10).max(0);
+    let limit = limit.unwrap_or(10).clamp(0, 200);
     load_unread(Some(limit))
 }
 
-/// Full unread Messages list, newest first.
+/// Full unread Messages list, newest first (capped at 500).
 #[tauri::command]
 pub fn list_all_unread_messages() -> UnreadMessagesResult {
-    load_unread(None)
+    load_unread(Some(500))
 }
 
 /// Probe whether `chat.db` is readable (Full Disk Access).
@@ -430,9 +435,9 @@ pub fn open_full_disk_access_settings() -> Result<(), DbError> {
         }
     }
 
-    Err(DbError::Message(
-        last_err.unwrap_or_else(|| "failed to open Full Disk Access settings".into()),
-    ))
+    Err(DbError::Message(last_err.unwrap_or_else(|| {
+        "failed to open Full Disk Access settings".into()
+    })))
 }
 
 fn encode_imessage_target(value: &str) -> String {
@@ -455,7 +460,10 @@ pub fn open_message_conversation(
     chat_guid: Option<String>,
 ) -> Result<(), DbError> {
     let identifier = chat_identifier.trim();
-    let guid = chat_guid.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let guid = chat_guid
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
 
     if identifier.is_empty() && guid.is_none() {
         return Err(DbError::Message(
@@ -475,10 +483,7 @@ pub fn open_message_conversation(
         }
         v
     } else {
-        let mut v = vec![format!(
-            "imessage://{}",
-            encode_imessage_target(identifier)
-        )];
+        let mut v = vec![format!("imessage://{}", encode_imessage_target(identifier))];
         if let Some(g) = guid {
             v.push(format!("imessage://{}", encode_imessage_target(g)));
         }

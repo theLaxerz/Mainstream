@@ -90,9 +90,7 @@ fn ring_access_token(refresh_token: &str) -> Result<String, DbError> {
         .json()
         .map_err(|e| DbError::Message(format!("ring oauth json: {e}")))?;
     if !status.is_success() {
-        return Err(DbError::Message(format!(
-            "Ring auth failed ({status}): {body}"
-        )));
+        return Err(DbError::Message(format!("Ring auth failed ({status})")));
     }
     body.get("access_token")
         .and_then(|v| v.as_str())
@@ -113,9 +111,7 @@ fn fetch_ring_devices(refresh_token: &str) -> Result<Vec<HomeDevice>, DbError> {
         .json()
         .map_err(|e| DbError::Message(format!("ring devices json: {e}")))?;
     if !status.is_success() {
-        return Err(DbError::Message(format!(
-            "Ring devices failed ({status}): {body}"
-        )));
+        return Err(DbError::Message(format!("Ring devices failed ({status})")));
     }
 
     let mut out = Vec::new();
@@ -169,9 +165,7 @@ fn blink_login(email: &str, password: &str, device_uid: &str) -> Result<(String,
         .json()
         .map_err(|e| DbError::Message(format!("blink login json: {e}")))?;
     if !status.is_success() {
-        return Err(DbError::Message(format!(
-            "Blink login failed ({status}): {body}"
-        )));
+        return Err(DbError::Message(format!("Blink login failed ({status})")));
     }
     let token = body
         .get("auth")
@@ -187,12 +181,15 @@ fn blink_login(email: &str, password: &str, device_uid: &str) -> Result<(String,
     Ok((token, account_id))
 }
 
-fn fetch_blink_devices(email: &str, password: &str, device_uid: &str) -> Result<Vec<HomeDevice>, DbError> {
+fn fetch_blink_devices(
+    email: &str,
+    password: &str,
+    device_uid: &str,
+) -> Result<Vec<HomeDevice>, DbError> {
     let (token, account_id) = blink_login(email, password, device_uid)?;
     let client = http_client()?;
-    let homes_url = format!(
-        "https://rest-prod.immedia-semi.com/api/v1/accounts/{account_id}/homes"
-    );
+    let homes_url =
+        format!("https://rest-prod.immedia-semi.com/api/v1/accounts/{account_id}/homes");
     let homes: Value = client
         .get(&homes_url)
         .header("TOKEN_AUTH", &token)
@@ -245,9 +242,8 @@ fn fetch_blink_devices(email: &str, password: &str, device_uid: &str) -> Result<
 #[tauri::command]
 pub fn get_home_settings(state: State<'_, DbState>) -> Result<HomeSettings, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
-    let blink_device_uid = get_setting(db.conn(), SETTING_BLINK_UID)?.unwrap_or_else(|| {
-        format!("mainstream-{}", uuid_simple())
-    });
+    let blink_device_uid = get_setting(db.conn(), SETTING_BLINK_UID)?
+        .unwrap_or_else(|| format!("mainstream-{}", uuid_simple()));
     Ok(HomeSettings {
         ring_connected: load_ring_token()?.is_some(),
         blink_connected: get_setting(db.conn(), "home.blink_email")?
@@ -295,7 +291,9 @@ pub fn save_home_credentials(
         if !pw.is_empty() {
             let email = get_setting(db.conn(), "home.blink_email")?.unwrap_or_default();
             if email.is_empty() {
-                return Err(DbError::Message("Blink email required before password".into()));
+                return Err(DbError::Message(
+                    "Blink email required before password".into(),
+                ));
             }
             blink_entry(&email)?
                 .set_password(pw)
@@ -317,8 +315,7 @@ pub(crate) fn fetch_home_devices(state: &DbState) -> Result<Option<Vec<HomeDevic
     let blink_email = get_setting(db.conn(), "home.blink_email")?.unwrap_or_default();
     let blink_uid = get_setting(db.conn(), SETTING_BLINK_UID)?.unwrap_or_else(|| uuid_simple());
     let ring_configured = load_ring_token()?.is_some();
-    let blink_configured =
-        !blink_email.is_empty() && load_blink_password(&blink_email)?.is_some();
+    let blink_configured = !blink_email.is_empty() && load_blink_password(&blink_email)?.is_some();
     drop(db);
 
     if !ring_configured && !blink_configured {
