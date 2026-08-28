@@ -1,5 +1,6 @@
 use crate::commands::open::open_with_system;
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
+use crate::security::{public_http_client, validate_feed_url};
 use chrono::{DateTime, Utc};
 use feed_rs::parser;
 use rusqlite::{params, Connection};
@@ -7,8 +8,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::State;
 
-const DEFAULT_FEEDS_JSON: &str =
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../feeds.default.json"));
+const DEFAULT_FEEDS_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../feeds.default.json"
+));
 
 /// Recency half-life in hours for exponential decay.
 const RECENCY_HALF_LIFE_HOURS: f64 = 36.0;
@@ -258,11 +261,7 @@ pub fn get_news_last_refresh(state: State<'_, DbState>) -> Result<Option<String>
 }
 
 fn http_client() -> Result<reqwest::blocking::Client, DbError> {
-    reqwest::blocking::Client::builder()
-        .user_agent("MainstreamLifeOS/0.1 (+local; RSS reader)")
-        .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .map_err(|e| DbError::Message(format!("http client: {e}")))
+    public_http_client(20, Some("MainstreamLifeOS/0.1 (+local; RSS reader)"))
 }
 
 fn seed_feeds_if_empty(conn: &Connection) -> Result<usize, DbError> {
@@ -320,8 +319,9 @@ fn fetch_feed(
     client: &reqwest::blocking::Client,
     feed_url: &str,
 ) -> Result<Vec<ParsedEntry>, DbError> {
+    let feed_url = validate_feed_url(feed_url)?;
     let bytes = client
-        .get(feed_url)
+        .get(&feed_url)
         .send()
         .and_then(|r| r.error_for_status())
         .and_then(|r| r.bytes())
@@ -371,10 +371,7 @@ fn fetch_feed(
             })
             .map(|s| truncate(&s, 280));
 
-        let published_at = entry
-            .published
-            .or(entry.updated)
-            .map(|dt| dt.to_rfc3339());
+        let published_at = entry.published.or(entry.updated).map(|dt| dt.to_rfc3339());
 
         out.push(ParsedEntry {
             title,
@@ -415,8 +412,7 @@ fn upsert_item(
 
 fn rerank_all(conn: &Connection) -> Result<usize, DbError> {
     let prefs = {
-        let mut stmt =
-            conn.prepare("SELECT feed_url, weight, enabled, muted FROM news_prefs")?;
+        let mut stmt = conn.prepare("SELECT feed_url, weight, enabled, muted FROM news_prefs")?;
         let map: HashMap<String, (f64, bool, bool)> = stmt
             .query_map([], |row| {
                 Ok((
@@ -435,9 +431,8 @@ fn rerank_all(conn: &Connection) -> Result<usize, DbError> {
     let topics = load_topic_map(conn)?;
     let now = Utc::now();
 
-    let mut stmt = conn.prepare(
-        "SELECT id, source_id, title, published_at, fetched_at, hidden FROM news_items",
-    )?;
+    let mut stmt = conn
+        .prepare("SELECT id, source_id, title, published_at, fetched_at, hidden FROM news_items")?;
     let rows: Vec<(i64, String, String, Option<String>, String, bool)> = stmt
         .query_map([], |row| {
             Ok((
@@ -454,10 +449,7 @@ fn rerank_all(conn: &Connection) -> Result<usize, DbError> {
 
     let mut updated = 0usize;
     for (id, source_id, title, published_at, fetched_at, hidden) in rows {
-        let (weight, enabled, muted) = prefs
-            .get(&source_id)
-            .copied()
-            .unwrap_or((1.0, true, false));
+        let (weight, enabled, muted) = prefs.get(&source_id).copied().unwrap_or((1.0, true, false));
 
         let score = if hidden || muted || !enabled {
             0.0
@@ -496,7 +488,9 @@ fn topic_affinity(title: &str, topics: &HashMap<String, f64>) -> f64 {
 fn load_topic_map(conn: &Connection) -> Result<HashMap<String, f64>, DbError> {
     let mut stmt = conn.prepare("SELECT term, score FROM news_topic_affinity")?;
     let map = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)))?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+        })?
         .filter_map(|r| r.ok())
         .collect();
     Ok(map)
@@ -566,9 +560,9 @@ fn get_news_item(conn: &Connection, id: i64) -> Result<NewsItem, DbError> {
 
 fn tokenize(text: &str) -> Vec<String> {
     const STOP: &[&str] = &[
-        "a", "an", "the", "and", "or", "but", "of", "to", "in", "on", "for", "with", "at",
-        "by", "from", "as", "is", "are", "was", "were", "be", "this", "that", "it", "its",
-        "new", "how", "why", "what", "when", "who", "your", "you", "we", "our", "their",
+        "a", "an", "the", "and", "or", "but", "of", "to", "in", "on", "for", "with", "at", "by",
+        "from", "as", "is", "are", "was", "were", "be", "this", "that", "it", "its", "new", "how",
+        "why", "what", "when", "who", "your", "you", "we", "our", "their",
     ];
     text.to_lowercase()
         .split(|c: char| !c.is_alphanumeric())

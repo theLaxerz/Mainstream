@@ -1,4 +1,5 @@
 use crate::db::{get_setting, set_setting, DbError, DbState};
+use crate::security::{is_secret_setting_key, require_generic_setting_key, validate_feed_url};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -33,6 +34,7 @@ pub struct UpsertNewsPrefInput {
 
 #[tauri::command]
 pub fn get_setting_cmd(state: State<'_, DbState>, key: String) -> Result<Option<String>, DbError> {
+    require_generic_setting_key(&key)?;
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
     get_setting(db.conn(), &key)
 }
@@ -43,6 +45,7 @@ pub fn set_setting_cmd(
     key: String,
     value: String,
 ) -> Result<(), DbError> {
+    require_generic_setting_key(&key)?;
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
     set_setting(db.conn(), &key, &value)
 }
@@ -50,7 +53,9 @@ pub fn set_setting_cmd(
 #[tauri::command]
 pub fn list_settings(state: State<'_, DbState>) -> Result<Vec<Setting>, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
-    let mut stmt = db.conn().prepare("SELECT key, value FROM settings ORDER BY key")?;
+    let mut stmt = db
+        .conn()
+        .prepare("SELECT key, value FROM settings ORDER BY key")?;
     let items = stmt
         .query_map([], |row| {
             Ok(Setting {
@@ -58,7 +63,10 @@ pub fn list_settings(state: State<'_, DbState>) -> Result<Vec<Setting>, DbError>
                 value: row.get(1)?,
             })
         })?
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|s| !is_secret_setting_key(&s.key))
+        .collect();
     Ok(items)
 }
 
@@ -89,10 +97,7 @@ pub fn upsert_news_pref(
     input: UpsertNewsPrefInput,
 ) -> Result<NewsPref, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
-    let feed_url = input.feed_url.trim();
-    if feed_url.is_empty() {
-        return Err(DbError::Message("feed_url is required".into()));
-    }
+    let feed_url = validate_feed_url(&input.feed_url)?;
     let weight = input.weight.unwrap_or(1.0);
     let enabled = if input.enabled.unwrap_or(true) { 1 } else { 0 };
     let muted = if input.muted.unwrap_or(false) { 1 } else { 0 };

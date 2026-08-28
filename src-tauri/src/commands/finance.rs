@@ -176,9 +176,8 @@ fn map_transaction_view(row: &rusqlite::Row<'_>) -> rusqlite::Result<Transaction
 }
 
 fn get_account(conn: &Connection, id: i64) -> Result<Option<Account>, DbError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, name, kind, currency, created_at FROM accounts WHERE id = ?1",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT id, name, kind, currency, created_at FROM accounts WHERE id = ?1")?;
     let mut rows = stmt.query(params![id])?;
     if let Some(row) = rows.next()? {
         Ok(Some(map_account(row)?))
@@ -400,7 +399,10 @@ fn cell(record: &csv::StringRecord, idx: &HashMap<String, usize>, keys: &[&str])
     String::new()
 }
 
-fn parse_csv_rows(csv_text: &str, format_hint: Option<&str>) -> Result<(String, Vec<PendingTxn>), DbError> {
+fn parse_csv_rows(
+    csv_text: &str,
+    format_hint: Option<&str>,
+) -> Result<(String, Vec<PendingTxn>), DbError> {
     let mut reader = ReaderBuilder::new()
         .flexible(true)
         .trim(csv::Trim::All)
@@ -466,7 +468,9 @@ fn parse_apple_card_row(
     }
     let abs = parse_amount(&amount_raw)?.abs();
     // Apple Card exports positive amounts; type distinguishes direction.
-    let amount = if txn_type.contains("payment") || txn_type.contains("credit") || txn_type.contains("refund")
+    let amount = if txn_type.contains("payment")
+        || txn_type.contains("credit")
+        || txn_type.contains("refund")
     {
         abs
     } else {
@@ -484,13 +488,8 @@ fn parse_apple_card_row(
         merchant
     };
     let posted_at = parse_date_to_iso(&date)?;
-    let external_id = make_external_id(&[
-        "apple_card",
-        &date,
-        &description,
-        &amount_raw,
-        &txn_type,
-    ]);
+    let external_id =
+        make_external_id(&["apple_card", &date, &description, &amount_raw, &txn_type]);
     Ok(Some(PendingTxn {
         amount,
         description,
@@ -575,7 +574,11 @@ fn parse_generic_row(
         &["description", "memo", "payee", "name", "merchant"],
     );
     let category = cell(record, idx, &["category"]);
-    let amount_raw = cell(record, idx, &["amount", "amount (usd)", "transaction amount"]);
+    let amount_raw = cell(
+        record,
+        idx,
+        &["amount", "amount (usd)", "transaction amount"],
+    );
     let debit = cell(record, idx, &["debit", "withdrawal"]);
     let credit = cell(record, idx, &["credit", "deposit"]);
 
@@ -881,6 +884,11 @@ pub fn import_transactions_csv(
     input: ImportCsvInput,
 ) -> Result<ImportCsvResult, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
+    if input.csv_text.len() > 8 * 1024 * 1024 {
+        return Err(DbError::Message(
+            "CSV is too large to import (max 8 MB)".into(),
+        ));
+    }
     if get_account(db.conn(), input.account_id)?.is_none() {
         return Err(DbError::Message(format!(
             "account {} not found",

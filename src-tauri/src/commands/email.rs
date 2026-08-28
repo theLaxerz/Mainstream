@@ -1,5 +1,6 @@
 use crate::commands::open::open_with_system;
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
+use crate::security::validate_imap_host;
 use imap::types::Fetch;
 use keyring::Entry;
 use mailparse::{addrparse, parse_mail, MailHeaderMap};
@@ -219,7 +220,8 @@ pub(crate) fn parse_headers(raw: &[u8]) -> ParsedHeaders {
         };
     };
 
-    let message_id = header_value(&parsed, "Message-ID").or_else(|| header_value(&parsed, "Message-Id"));
+    let message_id =
+        header_value(&parsed, "Message-ID").or_else(|| header_value(&parsed, "Message-Id"));
     let subject = header_value(&parsed, "Subject").unwrap_or_else(|| "(no subject)".into());
     let to_raw = header_value(&parsed, "To").unwrap_or_default();
     let to_addrs = parse_address_list(&to_raw)
@@ -301,7 +303,9 @@ fn is_junk_mailbox(name: &str) -> bool {
 }
 
 fn normalize_addr(addr: &str) -> String {
-    addr.trim().trim_matches(|c| c == '<' || c == '>').to_ascii_lowercase()
+    addr.trim()
+        .trim_matches(|c| c == '<' || c == '>')
+        .to_ascii_lowercase()
 }
 
 /// Best-effort contact signals from Messages `handle.id` values.
@@ -529,8 +533,12 @@ pub(crate) fn sync_imap(conn: &Connection) -> Result<EmailSyncResult, DbError> {
         .build()
         .map_err(|e| DbError::Message(format!("TLS init failed: {e}")))?;
 
-    let client = imap::connect((settings.host.as_str(), settings.port), settings.host.as_str(), &tls)
-        .map_err(|e| DbError::Message(format!("IMAP connect failed: {e}")))?;
+    let client = imap::connect(
+        (settings.host.as_str(), settings.port),
+        settings.host.as_str(),
+        &tls,
+    )
+    .map_err(|e| DbError::Message(format!("IMAP connect failed: {e}")))?;
 
     let mut session = client
         .login(&settings.user, &password)
@@ -603,9 +611,7 @@ pub(crate) fn sync_imap(conn: &Connection) -> Result<EmailSyncResult, DbError> {
     }
 
     // Any local unread for this mailbox not returned as UNSEEN is now read.
-    let mut stmt = conn.prepare(
-        "SELECT uid FROM emails WHERE mailbox = ?1 AND is_unread = 1",
-    )?;
+    let mut stmt = conn.prepare("SELECT uid FROM emails WHERE mailbox = ?1 AND is_unread = 1")?;
     let local_uids: Vec<i64> = stmt
         .query_map(params![mailbox], |row| row.get(0))?
         .filter_map(|r| r.ok())
@@ -641,10 +647,12 @@ pub fn save_email_settings(
     input: SaveEmailSettingsInput,
 ) -> Result<EmailSettings, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
-    let host = input.host.trim();
+    let host = validate_imap_host(input.host.trim())?;
     let user = input.user.trim();
     if host.is_empty() || user.is_empty() {
-        return Err(DbError::Message("IMAP host and username are required".into()));
+        return Err(DbError::Message(
+            "IMAP host and username are required".into(),
+        ));
     }
     let port = input.port.unwrap_or(993);
     let mailbox = input
@@ -656,7 +664,7 @@ pub fn save_email_settings(
 
     let previous_user = get_setting(db.conn(), SETTING_USER)?.unwrap_or_default();
 
-    set_setting(db.conn(), SETTING_HOST, host)?;
+    set_setting(db.conn(), SETTING_HOST, &host)?;
     set_setting(db.conn(), SETTING_PORT, &port.to_string())?;
     set_setting(db.conn(), SETTING_USER, user)?;
     set_setting(db.conn(), SETTING_MAILBOX, mailbox)?;
@@ -691,9 +699,7 @@ pub fn list_important_emails(
 }
 
 #[tauri::command]
-pub fn list_all_important_emails(
-    state: State<'_, DbState>,
-) -> Result<Vec<EmailMessage>, DbError> {
+pub fn list_all_important_emails(state: State<'_, DbState>) -> Result<Vec<EmailMessage>, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
     list_important(db.conn(), Some(500))
 }
@@ -701,9 +707,9 @@ pub fn list_all_important_emails(
 #[tauri::command]
 pub fn open_email(state: State<'_, DbState>, id: i64) -> Result<(), DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
-    let mut stmt = db.conn().prepare(
-        "SELECT message_url, message_id FROM emails WHERE id = ?1",
-    )?;
+    let mut stmt = db
+        .conn()
+        .prepare("SELECT message_url, message_id FROM emails WHERE id = ?1")?;
     let (message_url, message_id): (Option<String>, Option<String>) = stmt
         .query_row(params![id], |row| Ok((row.get(0)?, row.get(1)?)))
         .map_err(|_| DbError::Message(format!("email {id} not found")))?;
