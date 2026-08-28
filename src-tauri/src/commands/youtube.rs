@@ -181,6 +181,10 @@ fn upsert_video(
 
 #[tauri::command]
 pub fn refresh_youtube(state: State<'_, DbState>) -> Result<YoutubeRefreshResult, DbError> {
+    run_refresh_youtube(&state)
+}
+
+pub(crate) fn run_refresh_youtube(state: &DbState) -> Result<YoutubeRefreshResult, DbError> {
     let prefs: Vec<YoutubePref> = {
         let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
         let mut stmt = db.conn().prepare(

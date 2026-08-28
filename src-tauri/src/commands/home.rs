@@ -312,12 +312,18 @@ pub fn save_home_credentials(
     get_home_settings(state)
 }
 
-#[tauri::command]
-pub fn list_home_devices(state: State<'_, DbState>) -> Result<Vec<HomeDevice>, DbError> {
+pub(crate) fn fetch_home_devices(state: &DbState) -> Result<Option<Vec<HomeDevice>>, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
     let blink_email = get_setting(db.conn(), "home.blink_email")?.unwrap_or_default();
     let blink_uid = get_setting(db.conn(), SETTING_BLINK_UID)?.unwrap_or_else(|| uuid_simple());
+    let ring_configured = load_ring_token()?.is_some();
+    let blink_configured =
+        !blink_email.is_empty() && load_blink_password(&blink_email)?.is_some();
     drop(db);
+
+    if !ring_configured && !blink_configured {
+        return Ok(None);
+    }
 
     let mut devices = Vec::new();
     let mut errors = Vec::new();
@@ -341,5 +347,10 @@ pub fn list_home_devices(state: State<'_, DbState>) -> Result<Vec<HomeDevice>, D
     if devices.is_empty() && !errors.is_empty() {
         return Err(DbError::Message(errors.join(" · ")));
     }
-    Ok(devices)
+    Ok(Some(devices))
+}
+
+#[tauri::command]
+pub fn list_home_devices(state: State<'_, DbState>) -> Result<Vec<HomeDevice>, DbError> {
+    Ok(fetch_home_devices(&state)?.unwrap_or_default())
 }

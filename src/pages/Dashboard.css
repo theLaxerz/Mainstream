@@ -135,6 +135,14 @@
   padding-top: 0.25rem;
 }
 
+.dashboard-refresh-status {
+  flex: 1 1 100%;
+  margin: 0;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--ink-muted);
+}
+
 .dashboard-refresh {
   animation: brand-in 1.05s ease 0.2s both;
 }

@@ -3,7 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Mainstream opens Messages, Mail, and System Settings so you can jump to conversations and finish permissions setup.</string>
+	<string>Mainstream opens Messages, Mail, Calendar, and System Settings so you can jump to conversations, events, and finish permissions setup.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Mainstream reads your upcoming calendar events to show your schedule on the dashboard.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © Mainstream. Local-first Life OS.</string>
 </dict>

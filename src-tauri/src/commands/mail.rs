@@ -493,7 +493,10 @@ fn fetch_full_message(
     Ok(body.to_vec())
 }
 
-fn sync_informed_delivery(conn: &Connection, db_path: &Path) -> Result<PhysicalMailSyncResult, DbError> {
+pub(crate) fn sync_informed_delivery(
+    conn: &Connection,
+    db_path: &Path,
+) -> Result<PhysicalMailSyncResult, DbError> {
     let settings = read_settings(conn)?;
     if settings.host.trim().is_empty() || settings.user.trim().is_empty() {
         return Err(DbError::Message(

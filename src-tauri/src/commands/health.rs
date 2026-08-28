@@ -179,6 +179,18 @@ fn import_path(conn: &rusqlite::Connection, path: &Path) -> Result<usize, DbErro
     upsert_aggs(conn, &aggs)
 }
 
+pub(crate) fn try_import_configured(conn: &rusqlite::Connection) -> Result<Option<usize>, DbError> {
+    let export_path = match get_setting(conn, SETTING_EXPORT_PATH)? {
+        Some(path) if !path.trim().is_empty() => path,
+        _ => return Ok(None),
+    };
+    let path = Path::new(export_path.trim());
+    if !path.exists() {
+        return Ok(None);
+    }
+    import_path(conn, path).map(Some)
+}
+
 #[tauri::command]
 pub fn get_health_settings(state: State<'_, DbState>) -> Result<HealthSettings, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;

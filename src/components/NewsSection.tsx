@@ -76,9 +76,21 @@ export function NewsSection({ limit: dashboardLimit }: Props) {
     }
   }
 
+  async function reloadStories() {
+    try {
+      setError(null);
+      await loadPrefs();
+      await loadStories(limit);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
     void bootstrap(false);
-    return onDashboardRefresh(() => void bootstrap(false));
+    return onDashboardRefresh(() => void reloadStories());
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only bootstrap
   }, []);
 

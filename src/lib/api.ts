@@ -15,6 +15,7 @@ import type {
   StreamingItem,
   StreamingProvider,
   StreamingSettings,
+  DashboardRefreshResult,
   NewsFeedbackAction,
   NewsItem,
   NewsPref,
@@ -318,4 +319,8 @@ export async function listStreamingNew(limit?: number): Promise<StreamingItem[]>
 
 export async function openStreamingItem(id: number): Promise<void> {
   return invoke("open_streaming_item", { id });
+}
+
+export async function refreshDashboard(): Promise<DashboardRefreshResult> {
+  return invoke("refresh_dashboard");
 }

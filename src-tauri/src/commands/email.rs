@@ -503,7 +503,7 @@ fn fetch_header_bytes(fetch: &Fetch) -> Option<Vec<u8>> {
     fetch.body().map(|b| b.to_vec())
 }
 
-fn sync_imap(conn: &Connection) -> Result<EmailSyncResult, DbError> {
+pub(crate) fn sync_imap(conn: &Connection) -> Result<EmailSyncResult, DbError> {
     let settings = read_settings(conn)?;
     if settings.host.trim().is_empty() || settings.user.trim().is_empty() {
         return Err(DbError::Message(
