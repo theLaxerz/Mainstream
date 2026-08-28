@@ -210,7 +210,7 @@ pub(crate) fn fetch_home_devices(
                 errors.push(format!("Blink: {e}"));
                 devices.push(HomeDevice {
                     id: "blink-error".into(),
-                    name: "Blink",
+                    name: "Blink".into(),
                     vendor: "blink".into(),
                     device_type: "account".into(),
                     status: "error".into(),
