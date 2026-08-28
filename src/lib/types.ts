@@ -132,12 +132,21 @@ export type HomeDevice = {
   deviceType: string;
   status: string;
   detail: string | null;
+  thumbnailAvailable: boolean;
+  snapshotReady: boolean;
+  networkId: string | null;
+  cameraId: string | null;
 };
 
 export type HomeSettings = {
   ringConnected: boolean;
   blinkConnected: boolean;
-  blinkDeviceUid: string;
+  blinkEmail: string;
+};
+
+export type BlinkLoginResult = {
+  status: string;
+  detail: string | null;
 };
 
 export type YoutubePref = {

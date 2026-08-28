@@ -59,7 +59,7 @@ The **Mail** module searches your synced mailbox for USPS Informed Delivery dige
 ### Health, Home, YouTube, Streaming
 
 - **Health** — Import Apple Health `export.zip` / `export.xml` (steps, sleep, heart rate).
-- **Home** — Ring (refresh token) and Blink (email/password) in Keychain; lists cameras and doorbells.
+- **Home** — Ring (refresh token in Keychain) and Blink (OAuth + 2FA PIN). Blink refresh tokens stay in Keychain; camera stills are cached locally and can be refreshed with **Snap**.
 - **YouTube** — Add channel IDs; sync uses public YouTube RSS feeds.
 - **Streaming** — Free [TMDB](https://www.themoviedb.org/) API key; pick services (Prime, Apple TV+, Paramount+, Peacock, AMC+, Netflix, Max, Disney+, Hulu). **What's hot** and **New & available** lists refresh on sync.
 
@@ -78,5 +78,6 @@ SQLite lives in the app data directory as `app.db` (created on first launch).
 
 - macOS only
 - No send/reply from Messages inside Mainstream
+- Blink uses the unofficial OAuth API (same as Home Assistant / blinkpy); Amazon does not offer an official third-party camera API
 - No Plaid / live bank APIs — CSV import + local ledger only
 - No multi-user sync or cloud backup

@@ -8,6 +8,7 @@ import type {
   HealthDay,
   HealthSettings,
   HealthImportResult,
+  BlinkLoginResult,
   HomeDevice,
   HomeSettings,
   YoutubeItem,
@@ -241,14 +242,35 @@ export async function getHomeSettings(): Promise<HomeSettings> {
 export async function saveHomeCredentials(input: {
   ringRefreshToken?: string;
   blinkEmail?: string;
-  blinkPassword?: string;
-  blinkDeviceUid?: string;
 }): Promise<HomeSettings> {
   return invoke("save_home_credentials", { input });
 }
 
 export async function listHomeDevices(): Promise<HomeDevice[]> {
   return invoke("list_home_devices");
+}
+
+export async function blinkStartLogin(
+  email: string,
+  password: string,
+): Promise<BlinkLoginResult> {
+  return invoke("blink_start_login", { email, password });
+}
+
+export async function blinkVerifyPin(pin: string): Promise<BlinkLoginResult> {
+  return invoke("blink_verify_pin", { pin });
+}
+
+export async function blinkDisconnect(): Promise<void> {
+  return invoke("blink_disconnect");
+}
+
+export async function homeDeviceImageBase64(id: string): Promise<string | null> {
+  return invoke("home_device_image_base64", { id });
+}
+
+export async function blinkCaptureSnapshot(id: string): Promise<HomeDevice> {
+  return invoke("blink_capture_snapshot", { id });
 }
 
 export async function listYoutubePrefs(): Promise<YoutubePref[]> {

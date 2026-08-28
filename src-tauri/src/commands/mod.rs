@@ -3,6 +3,7 @@ pub mod finance;
 pub mod messages;
 pub mod email;
 pub mod calendar;
+pub mod blink;
 pub mod home;
 pub mod health;
 pub mod mail;
