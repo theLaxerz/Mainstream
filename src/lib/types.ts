@@ -183,3 +183,15 @@ export type StreamingSettings = {
   hasApiKey: boolean;
   enabledProviders: string[];
 };
+
+export type ModuleRefreshResult = {
+  module: string;
+  status: "ok" | "skipped" | "error" | string;
+  detail: string | null;
+};
+
+export type DashboardRefreshResult = {
+  startedAt: string;
+  finishedAt: string;
+  modules: ModuleRefreshResult[];
+};

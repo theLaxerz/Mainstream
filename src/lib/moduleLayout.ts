@@ -2,6 +2,7 @@ import { getSetting, setSetting } from "./api";
 
 export const MODULE_IDS = [
   "messages",
+  "calendar",
   "email",
   "mail",
   "news",
@@ -38,6 +39,11 @@ export const MODULE_META: Record<
     title: "Messages",
     eyebrow: "Unread",
     blurb: "iMessage conversations grouped by chat",
+  },
+  calendar: {
+    title: "Calendar",
+    eyebrow: "Upcoming",
+    blurb: "Events from macOS Calendar.app",
   },
   email: {
     title: "Email",
@@ -95,6 +101,7 @@ const SETTING_KEY = "dashboard.layout.v1";
 
 export const DEFAULT_MODULE_LIMITS: Record<ModuleId, number> = {
   messages: 10,
+  calendar: 8,
   email: 10,
   mail: 12,
   news: 8,
@@ -109,6 +116,7 @@ export const DEFAULT_MODULE_LIMITS: Record<ModuleId, number> = {
 
 const DEFAULT_ORDER: ModuleId[] = [
   "messages",
+  "calendar",
   "email",
   "mail",
   "news",

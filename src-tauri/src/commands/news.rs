@@ -78,6 +78,10 @@ pub fn seed_default_news_feeds(state: State<'_, DbState>) -> Result<usize, DbErr
 
 #[tauri::command]
 pub fn refresh_news(state: State<'_, DbState>) -> Result<NewsRefreshResult, DbError> {
+    run_refresh_news(&state)
+}
+
+pub(crate) fn run_refresh_news(state: &DbState) -> Result<NewsRefreshResult, DbError> {
     let (prefs, client) = {
         let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
         seed_feeds_if_empty(db.conn())?;

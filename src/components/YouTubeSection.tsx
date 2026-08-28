@@ -51,7 +51,7 @@ export function YouTubeSection({ limit = 10 }: Props) {
 
   useEffect(() => {
     void refresh();
-    return onDashboardRefresh(() => void refresh({ fetch: true }));
+    return onDashboardRefresh(() => void refresh());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [limit]);
 

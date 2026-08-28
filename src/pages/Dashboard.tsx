@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Calendar } from "../components/Calendar";
+import { CalendarSection } from "../components/CalendarSection";
 import { Clock } from "../components/Clock";
 import { CommandBar } from "../components/CommandBar";
 import { EmailSection } from "../components/EmailSection";
@@ -22,6 +23,7 @@ import {
   type ModuleId,
   type ModuleLayoutEntry,
 } from "../lib/moduleLayout";
+import { refreshDashboard } from "../lib/api";
 import { requestDashboardRefresh } from "../lib/refresh";
 import "./Dashboard.css";
 
@@ -30,6 +32,8 @@ function renderModule(entry: ModuleLayoutEntry): ReactNode {
   switch (id) {
     case "messages":
       return <MessagesSection limit={listLimit} />;
+    case "calendar":
+      return <CalendarSection limit={listLimit} />;
     case "email":
       return <EmailSection limit={listLimit} />;
     case "mail":
@@ -62,6 +66,7 @@ export function Dashboard() {
   const [layoutReady, setLayoutReady] = useState(false);
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshStatus, setRefreshStatus] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -78,10 +83,24 @@ export function Dashboard() {
 
   const modules = useMemo(() => enabledModules(layout), [layout]);
 
-  const onRefresh = useCallback(() => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    requestDashboardRefresh();
-    window.setTimeout(() => setRefreshing(false), 900);
+    setRefreshStatus(null);
+    try {
+      const result = await refreshDashboard();
+      requestDashboardRefresh();
+      const synced = result.modules.filter((m) => m.status === "ok").length;
+      const errors = result.modules.filter((m) => m.status === "error").length;
+      setRefreshStatus(
+        errors > 0
+          ? `Synced ${synced} module(s) · ${errors} error(s)`
+          : `Synced ${synced} module(s)`,
+      );
+    } catch (e) {
+      setRefreshStatus(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRefreshing(false);
+    }
   }, []);
 
   const onCustomize = useCallback(() => setCustomizeOpen(true), []);
@@ -134,6 +153,11 @@ export function Dashboard() {
       ) : null}
 
       <div className="dashboard-footer">
+        {refreshStatus ? (
+          <p className="dashboard-refresh-status" role="status">
+            {refreshStatus}
+          </p>
+        ) : null}
         <button
           type="button"
           className="btn btn-ghost"

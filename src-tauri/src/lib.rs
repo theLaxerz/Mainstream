@@ -57,6 +57,10 @@ pub fn run() {
             commands::messages::messages_access_status,
             commands::messages::open_full_disk_access_settings,
             commands::messages::open_message_conversation,
+            commands::calendar::calendar_access_status,
+            commands::calendar::list_calendar_events,
+            commands::calendar::open_calendar_privacy_settings,
+            commands::calendar::open_calendar_event,
             commands::mail::sync_physical_mail,
             commands::mail::list_physical_mail,
             commands::mail::physical_mail_image_base64,
@@ -92,6 +96,7 @@ pub fn run() {
             commands::finance::delete_transaction,
             commands::finance::get_finance_summary,
             commands::finance::import_transactions_csv,
+            commands::refresh::refresh_dashboard,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

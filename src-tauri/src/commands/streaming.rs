@@ -108,7 +108,7 @@ fn http_client() -> Result<reqwest::blocking::Client, DbError> {
         .map_err(|e| DbError::Message(format!("http: {e}")))
 }
 
-fn load_api_key(conn: &Connection) -> Result<String, DbError> {
+pub(crate) fn load_api_key(conn: &Connection) -> Result<String, DbError> {
     get_setting(conn, SETTING_TMDB_KEY)?
         .filter(|k| !k.trim().is_empty())
         .ok_or_else(|| {
@@ -118,7 +118,7 @@ fn load_api_key(conn: &Connection) -> Result<String, DbError> {
         })
 }
 
-fn load_enabled_providers(conn: &Connection) -> Vec<String> {
+pub(crate) fn load_enabled_providers(conn: &Connection) -> Vec<String> {
     let defaults: Vec<String> = default_providers()
         .iter()
         .map(|p| p.id.clone())
@@ -261,6 +261,10 @@ pub fn save_streaming_settings(
 
 #[tauri::command]
 pub fn refresh_streaming(state: State<'_, DbState>) -> Result<StreamingRefreshResult, DbError> {
+    run_refresh_streaming(&state)
+}
+
+pub(crate) fn run_refresh_streaming(state: &DbState) -> Result<StreamingRefreshResult, DbError> {
     let (key, enabled) = {
         let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
         (load_api_key(db.conn())?, load_enabled_providers(db.conn()))

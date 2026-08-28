@@ -66,7 +66,7 @@ export function StreamingSection({ limit = 8 }: Props) {
 
   useEffect(() => {
     void refresh();
-    return onDashboardRefresh(() => void refresh({ sync: true }));
+    return onDashboardRefresh(() => void refresh());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [limit]);
 
