@@ -15,6 +15,7 @@ import { NewsSection } from "../components/NewsSection";
 import { NotesSection } from "../components/NotesSection";
 import { ShortcutsSection } from "../components/ShortcutsSection";
 import { StreamingSection } from "../components/StreamingSection";
+import { TodayBriefing } from "../components/TodayBriefing";
 import { Weather } from "../components/Weather";
 import { YouTubeSection } from "../components/YouTubeSection";
 import {
@@ -200,8 +201,9 @@ export function Dashboard() {
             <Weather />
             <Calendar />
           </div>
-          <p className="hero-tagline">Your day, gathered in one calm place.</p>
         </header>
+
+        <TodayBriefing />
 
         <div className="dashboard-modules-head">
           <div>

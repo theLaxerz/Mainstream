@@ -10,7 +10,8 @@
   align-items: center;
   text-align: center;
   gap: 0.85rem;
-  min-height: min(58vh, 480px);
+  min-height: auto;
+  padding: 0.35rem 0 0.15rem;
   justify-content: center;
   margin-bottom: 1.5rem;
 }
@@ -50,15 +51,6 @@
   filter: drop-shadow(0 2px 0 rgba(255, 255, 255, 0.25));
   transform: translateZ(0);
   animation: brand-in 0.85s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-.hero-tagline {
-  margin: 0;
-  max-width: 28rem;
-  color: var(--ink-soft);
-  font-size: 1.05rem;
-  font-weight: 500;
-  animation: brand-in 1s ease 0.12s both;
 }
 
 .dashboard-modules-head {
@@ -192,7 +184,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .brand,
-  .hero-tagline,
   .dashboard-module-slot,
   .dashboard-refresh {
     animation: none;

@@ -65,11 +65,30 @@ pub struct TransactionView {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct FinanceDaySpend {
+    pub day: String,
+    pub spent: f64,
+    pub income: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FinanceCategorySpend {
+    pub name: String,
+    pub spent: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FinanceSummary {
     pub cash_total: f64,
     pub net_total: f64,
+    pub spent_this_month: f64,
+    pub income_this_month: f64,
     pub accounts: Vec<AccountWithBalance>,
     pub recent: Vec<TransactionView>,
+    pub spend_by_day: Vec<FinanceDaySpend>,
+    pub spend_by_category: Vec<FinanceCategorySpend>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,7 +135,7 @@ pub struct UpdateTransactionInput {
 pub struct ImportCsvInput {
     pub account_id: i64,
     pub csv_text: String,
-    /// Optional hint: "apple_card" | "chase" | "bofa" | "generic" | auto-detect when omitted.
+    /// Optional hint: "apple_card" | "chase" | "bofa" | "capital_one" | "citi" | "discover" | "generic" | auto-detect when omitted.
     pub format: Option<String>,
 }
 
@@ -355,6 +374,12 @@ fn detect_csv_format(headers: &[String]) -> &'static str {
         "chase"
     } else if has("running bal") || (has("running balance") && has("date")) {
         "bofa"
+    } else if has("debit") && has("credit") && (has("card no") || has("card number")) {
+        "capital_one"
+    } else if has("debit") && has("credit") && has("status") {
+        "citi"
+    } else if has("trans date") || has("trans. date") {
+        "discover"
     } else if has("amount") && (has("date") || has("transaction date") || has("posted date")) {
         "generic"
     } else {
@@ -437,6 +462,9 @@ fn parse_csv_rows(
             "apple_card" => parse_apple_card_row(&record, &idx),
             "chase" => parse_chase_row(&record, &idx),
             "bofa" => parse_bofa_row(&record, &idx),
+            "capital_one" => parse_capital_one_row(&record, &idx),
+            "citi" => parse_citi_row(&record, &idx),
+            "discover" => parse_discover_row(&record, &idx),
             _ => parse_generic_row(&record, &idx),
         };
 
@@ -549,6 +577,107 @@ fn parse_bofa_row(
         description: desc,
         posted_at,
         category: None,
+        external_id,
+    }))
+}
+
+fn parse_debit_credit_amount(debit: &str, credit: &str) -> Result<Option<f64>, DbError> {
+    if !debit.is_empty() {
+        return Ok(Some(-parse_amount(debit)?.abs()));
+    }
+    if !credit.is_empty() {
+        return Ok(Some(parse_amount(credit)?.abs()));
+    }
+    Ok(None)
+}
+
+fn parse_capital_one_row(
+    record: &csv::StringRecord,
+    idx: &HashMap<String, usize>,
+) -> Result<Option<PendingTxn>, DbError> {
+    let date = cell(
+        record,
+        idx,
+        &["transaction date", "posted date", "date"],
+    );
+    let desc = cell(record, idx, &["description", "merchant"]);
+    let category = cell(record, idx, &["category"]);
+    let debit = cell(record, idx, &["debit"]);
+    let credit = cell(record, idx, &["credit"]);
+    if date.is_empty() {
+        return Ok(None);
+    }
+    let Some(amount) = parse_debit_credit_amount(&debit, &credit)? else {
+        return Ok(None);
+    };
+    let posted_at = parse_date_to_iso(&date)?;
+    let external_id = make_external_id(&["capital_one", &date, &desc, &amount.to_string()]);
+    Ok(Some(PendingTxn {
+        amount,
+        description: desc,
+        posted_at,
+        category: if category.is_empty() {
+            None
+        } else {
+            Some(category)
+        },
+        external_id,
+    }))
+}
+
+fn parse_citi_row(
+    record: &csv::StringRecord,
+    idx: &HashMap<String, usize>,
+) -> Result<Option<PendingTxn>, DbError> {
+    let date = cell(record, idx, &["date", "posted date", "transaction date"]);
+    let desc = cell(record, idx, &["description"]);
+    let debit = cell(record, idx, &["debit"]);
+    let credit = cell(record, idx, &["credit"]);
+    if date.is_empty() {
+        return Ok(None);
+    }
+    let Some(amount) = parse_debit_credit_amount(&debit, &credit)? else {
+        return Ok(None);
+    };
+    let posted_at = parse_date_to_iso(&date)?;
+    let external_id = make_external_id(&["citi", &date, &desc, &amount.to_string()]);
+    Ok(Some(PendingTxn {
+        amount,
+        description: desc,
+        posted_at,
+        category: None,
+        external_id,
+    }))
+}
+
+fn parse_discover_row(
+    record: &csv::StringRecord,
+    idx: &HashMap<String, usize>,
+) -> Result<Option<PendingTxn>, DbError> {
+    let date = cell(
+        record,
+        idx,
+        &["trans. date", "trans date", "transaction date", "post date", "date"],
+    );
+    let desc = cell(record, idx, &["description"]);
+    let category = cell(record, idx, &["category"]);
+    let amount_raw = cell(record, idx, &["amount"]);
+    if date.is_empty() || amount_raw.is_empty() {
+        return Ok(None);
+    }
+    // Discover exports purchases as positive amounts and payments as negative.
+    let amount = -parse_amount(&amount_raw)?;
+    let posted_at = parse_date_to_iso(&date)?;
+    let external_id = make_external_id(&["discover", &date, &desc, &amount_raw]);
+    Ok(Some(PendingTxn {
+        amount,
+        description: desc,
+        posted_at,
+        category: if category.is_empty() {
+            None
+        } else {
+            Some(category)
+        },
         external_id,
     }))
 }
@@ -856,6 +985,70 @@ pub fn delete_transaction(state: State<'_, DbState>, id: i64) -> Result<(), DbEr
     Ok(())
 }
 
+fn month_totals(conn: &Connection) -> Result<(f64, f64), DbError> {
+    conn.query_row(
+        "SELECT
+            COALESCE(SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0)
+         FROM transactions
+         WHERE substr(posted_at, 1, 7) = strftime('%Y-%m', 'now')",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .map_err(DbError::from)
+}
+
+fn list_spend_by_day(conn: &Connection, days: i64) -> Result<Vec<FinanceDaySpend>, DbError> {
+    let cutoff = Utc::now()
+        .date_naive()
+        .checked_sub_days(chrono::Days::new(days.max(1) as u64))
+        .unwrap_or_else(|| Utc::now().date_naive())
+        .format("%Y-%m-%d")
+        .to_string();
+    let mut stmt = conn.prepare(
+        "SELECT substr(posted_at, 1, 10) AS day,
+                COALESCE(SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END), 0) AS spent,
+                COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) AS income
+         FROM transactions
+         WHERE substr(posted_at, 1, 10) >= ?1
+         GROUP BY day
+         ORDER BY day ASC",
+    )?;
+    let rows = stmt
+        .query_map(params![cutoff], |row| {
+            Ok(FinanceDaySpend {
+                day: row.get(0)?,
+                spent: row.get(1)?,
+                income: row.get(2)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+fn list_spend_by_category(conn: &Connection) -> Result<Vec<FinanceCategorySpend>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(c.name, 'Uncategorized') AS name,
+                COALESCE(SUM(-t.amount), 0) AS spent
+         FROM transactions t
+         LEFT JOIN categories c ON c.id = t.category_id
+         WHERE t.amount < 0
+           AND substr(t.posted_at, 1, 7) = strftime('%Y-%m', 'now')
+         GROUP BY name
+         ORDER BY spent DESC
+         LIMIT 6",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(FinanceCategorySpend {
+                name: row.get(0)?,
+                spent: row.get(1)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 #[tauri::command]
 pub fn get_finance_summary(state: State<'_, DbState>) -> Result<FinanceSummary, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
@@ -870,11 +1063,18 @@ pub fn get_finance_summary(state: State<'_, DbState>) -> Result<FinanceSummary, 
         }
     }
     let recent = list_recent_transactions(db.conn(), 10, None)?;
+    let (spent_this_month, income_this_month) = month_totals(db.conn())?;
+    let spend_by_day = list_spend_by_day(db.conn(), 30)?;
+    let spend_by_category = list_spend_by_category(db.conn())?;
     Ok(FinanceSummary {
         cash_total,
         net_total,
+        spent_this_month,
+        income_this_month,
         accounts,
         recent,
+        spend_by_day,
+        spend_by_category,
     })
 }
 
@@ -937,4 +1137,69 @@ pub fn import_transactions_csv(
         skipped,
         format,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_capital_one_citi_and_discover() {
+        assert_eq!(
+            detect_csv_format(&[
+                "Transaction Date".into(),
+                "Posted Date".into(),
+                "Card No.".into(),
+                "Description".into(),
+                "Category".into(),
+                "Debit".into(),
+                "Credit".into(),
+            ]),
+            "capital_one"
+        );
+        assert_eq!(
+            detect_csv_format(&[
+                "Status".into(),
+                "Date".into(),
+                "Description".into(),
+                "Debit".into(),
+                "Credit".into(),
+            ]),
+            "citi"
+        );
+        assert_eq!(
+            detect_csv_format(&[
+                "Trans. Date".into(),
+                "Post Date".into(),
+                "Description".into(),
+                "Amount".into(),
+                "Category".into(),
+            ]),
+            "discover"
+        );
+    }
+
+    #[test]
+    fn parses_capital_one_debit_and_credit() {
+        let csv = "Transaction Date,Posted Date,Card No.,Description,Category,Debit,Credit\n\
+08/01/2026,08/02/2026,1234,Coffee,Dining,4.50,\n\
+08/03/2026,08/03/2026,1234,Refund,Merchandise,,12.00\n";
+        let (format, rows) = parse_csv_rows(csv, None).unwrap();
+        assert_eq!(format, "capital_one");
+        assert_eq!(rows.len(), 2);
+        assert!((rows[0].amount + 4.50).abs() < f64::EPSILON);
+        assert_eq!(rows[0].category.as_deref(), Some("Dining"));
+        assert!((rows[1].amount - 12.00).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn parses_discover_purchases_as_spend() {
+        let csv = "Trans. Date,Post Date,Description,Amount,Category\n\
+08/10/2026,08/11/2026,Bookstore,23.10,Shopping\n";
+        let (format, rows) = parse_csv_rows(csv, None).unwrap();
+        assert_eq!(format, "discover");
+        assert_eq!(rows.len(), 1);
+        assert!((rows[0].amount + 23.10).abs() < f64::EPSILON);
+        assert_eq!(rows[0].category.as_deref(), Some("Shopping"));
+    }
 }
