@@ -66,7 +66,7 @@ static BOOL request_full_access(EKEventStore *store, NSError **outError) {
     );
 }
 
-int mainstream_calendar_events(int64_t days_ahead, char **json_out, char **error_out) {
+int mainstream_calendar_events(int64_t days_back, int64_t days_ahead, char **json_out, char **error_out) {
     @autoreleasepool {
         if (json_out != NULL) {
             *json_out = NULL;
@@ -87,10 +87,18 @@ int mainstream_calendar_events(int64_t days_ahead, char **json_out, char **error
 
         NSCalendar *cal = [NSCalendar currentCalendar];
         NSDate *now = [NSDate date];
-        NSDate *start = [cal startOfDayForDate:now];
+        NSDate *todayStart = [cal startOfDayForDate:now];
+        NSInteger back = days_back < 0 ? 0 : (NSInteger)days_back;
+        NSDate *start = [cal dateByAddingUnit:NSCalendarUnitDay
+                                        value:-back
+                                       toDate:todayStart
+                                      options:0];
+        if (start == nil) {
+            start = todayStart;
+        }
         NSDate *end = [cal dateByAddingUnit:NSCalendarUnitDay
                                       value:(NSInteger)days_ahead + 1
-                                     toDate:start
+                                     toDate:todayStart
                                     options:0];
         if (end == nil) {
             end = now;

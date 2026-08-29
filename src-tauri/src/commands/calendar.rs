@@ -15,6 +15,7 @@ const CAL_NEEDS_PERMISSION: i32 = 1;
 
 extern "C" {
     fn mainstream_calendar_events(
+        days_back: i64,
         days_ahead: i64,
         json_out: *mut *mut c_char,
         error_out: *mut *mut c_char,
@@ -53,10 +54,12 @@ fn take_cstring(ptr: *mut c_char) -> Option<String> {
     }
 }
 
-fn fetch_events(days_ahead: i64) -> CalendarEventsResult {
+fn fetch_events(days_back: i64, days_ahead: i64) -> CalendarEventsResult {
     let mut json_ptr: *mut c_char = std::ptr::null_mut();
     let mut error_ptr: *mut c_char = std::ptr::null_mut();
-    let code = unsafe { mainstream_calendar_events(days_ahead, &mut json_ptr, &mut error_ptr) };
+    let code = unsafe {
+        mainstream_calendar_events(days_back, days_ahead, &mut json_ptr, &mut error_ptr)
+    };
     let json = take_cstring(json_ptr);
     let detail = take_cstring(error_ptr);
 
@@ -115,14 +118,19 @@ pub struct CalendarEventsResult {
 
 #[tauri::command]
 pub fn calendar_access_status() -> CalendarAccess {
-    fetch_events(1).access
+    fetch_events(0, 1).access
 }
 
 #[tauri::command]
-pub fn list_calendar_events(limit: Option<i64>, days_ahead: Option<i64>) -> CalendarEventsResult {
-    let limit = limit.unwrap_or(12).clamp(1, 100);
+pub fn list_calendar_events(
+    limit: Option<i64>,
+    days_ahead: Option<i64>,
+    days_back: Option<i64>,
+) -> CalendarEventsResult {
+    let limit = limit.unwrap_or(12).clamp(1, 200);
     let days_ahead = days_ahead.unwrap_or(14).clamp(1, 90);
-    let mut result = fetch_events(days_ahead);
+    let days_back = days_back.unwrap_or(0).clamp(0, 90);
+    let mut result = fetch_events(days_back, days_ahead);
     result.events.truncate(limit as usize);
     result
 }
