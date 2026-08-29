@@ -2,7 +2,7 @@
 
 macOS Life OS — a local-first personal command center built with **Tauri 2 + React + TypeScript**.
 
-Clock hero with weather, unread Messages, important email (IMAP), USPS Informed Delivery mail (OCR), tailored news, local finance ledger, notes, **Health** (Apple Health export), **Home** (Ring & Blink), **YouTube** (channel RSS), **Streaming** (what's hot / new via TMDB), and app/website shortcuts. Data stays on-device; the web is only used for RSS, weather, and launching shortcuts.
+Clock hero with a greeting and digital readout, weather, EventKit month agenda, unread Messages, important email (IMAP), USPS Informed Delivery mail (OCR), tailored news, local finance ledger with a spend chart, notes, **Health** (Apple Health export), **Home** (Ring & Blink), **YouTube** (channel RSS), **Streaming** (what's hot / new via TMDB), and app/website shortcuts. Data stays on-device; the web is only used for RSS, weather, and launching shortcuts.
 
 ## Run (dev)
 
@@ -63,10 +63,13 @@ The **Mail** module searches your synced mailbox for USPS Informed Delivery dige
 - **YouTube** — Add channel IDs; sync uses public YouTube RSS feeds.
 - **Streaming** — Free [TMDB](https://www.themoviedb.org/) API key; pick services (Prime, Apple TV+, Paramount+, Peacock, AMC+, Netflix, Max, Disney+, Hulu). A **Tonight** featured title sits above **What's hot** and **New & available**.
 - **Weather** — Pin a city in the hero; [Open-Meteo](https://open-meteo.com/) forecast, no API key.
+- **Finance** — Local accounts + CSV import (Apple Card, Chase, Bank of America, Capital One, Citi, Discover, or generic). The card shows a 14-day spend chart, this-month total, and category chips. No bank APIs.
 
 ## Layout
 
 - Sticky **command bar**: live clock, **⌘K** palette, theme (auto / dusk / light), **Layout** customizer, **Refresh all** with last-sync status
+- **Today briefing**: next event, unread chats, important email, steps, and this-month spend — chips scroll to the matching module
+- Hero calendar shows EventKit dots and a selected-day agenda (looks back within the visible month)
 - Shortcuts: `⌘K` command palette · `⌘,` customize layout · `⌘⇧R` refresh all modules
 - Quiet auto-refresh every 15 minutes (pauses while the window is hidden); modules show last-synced time
 - Layout prefs (enable/order/width/item counts) persist in SQLite settings
@@ -88,6 +91,5 @@ SQLite lives in the app data directory as `app.db` (created on first launch).
 
 - Reminders / Tasks module
 - In-app Messages reply
-- Finance charts and better CSV mapping
 - First-run onboarding
 - Signing, notarization, and auto-update

@@ -5,6 +5,7 @@ import {
   createTransaction,
   deleteAccount,
   deleteTransaction,
+  fillSpendDays,
   formatMoney,
   formatPosted,
   getFinanceSummary,
@@ -17,9 +18,11 @@ import {
   type FinanceSummary,
   type TransactionView,
 } from "../lib/finance";
+import { isTauriRuntime, previewFinanceSummary } from "../lib/browserPreview";
 import { onDashboardRefresh } from "../lib/refresh";
 import { DetailDrawer } from "./DetailDrawer";
 import { ModuleSection } from "./ModuleSection";
+import { SpendChart } from "./SpendChart";
 
 const ACCOUNT_KINDS: AccountKind[] = [
   "checking",
@@ -67,6 +70,12 @@ export function FinanceSection({ limit = 10 }: Props) {
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      if (!isTauriRuntime()) {
+        const demo = previewFinanceSummary();
+        setSummary(demo);
+        setTransactions(demo.recent);
+        setError(null);
+      }
     } finally {
       setLoading(false);
     }
@@ -224,7 +233,31 @@ export function FinanceSection({ limit = 10 }: Props) {
                   {formatMoney(summary?.netTotal ?? 0)}
                 </p>
               </div>
+              <div>
+                <p className="module-row-meta">Spent · month</p>
+                <p className="module-row-title finance-total">
+                  {formatMoney(summary?.spentThisMonth ?? 0)}
+                </p>
+              </div>
             </div>
+
+            {(summary?.spendByDay.length ?? 0) > 0 ||
+            (summary?.spentThisMonth ?? 0) > 0 ? (
+              <div className="sparkline-row">
+                <SpendChart days={fillSpendDays(summary?.spendByDay ?? [])} />
+              </div>
+            ) : null}
+
+            {summary && summary.spendByCategory.length > 0 ? (
+              <ul className="finance-cats">
+                {summary.spendByCategory.map((cat) => (
+                  <li key={cat.name}>
+                    <span>{cat.name}</span>
+                    <span>{formatMoney(cat.spent)}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
 
             {accounts.length > 0 ? (
               <ul className="module-list finance-accounts-compact">
@@ -420,6 +453,9 @@ export function FinanceSection({ limit = 10 }: Props) {
               <option value="apple_card">Apple Card</option>
               <option value="chase">Chase</option>
               <option value="bofa">Bank of America</option>
+              <option value="capital_one">Capital One</option>
+              <option value="citi">Citi</option>
+              <option value="discover">Discover</option>
               <option value="generic">Generic</option>
             </select>
             <input

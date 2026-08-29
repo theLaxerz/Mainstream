@@ -37,11 +37,26 @@ export type TransactionView = {
   externalId: string | null;
 };
 
+export type FinanceDaySpend = {
+  day: string;
+  spent: number;
+  income: number;
+};
+
+export type FinanceCategorySpend = {
+  name: string;
+  spent: number;
+};
+
 export type FinanceSummary = {
   cashTotal: number;
   netTotal: number;
+  spentThisMonth: number;
+  incomeThisMonth: number;
   accounts: AccountWithBalance[];
   recent: TransactionView[];
+  spendByDay: FinanceDaySpend[];
+  spendByCategory: FinanceCategorySpend[];
 };
 
 export type ImportCsvResult = {
@@ -50,11 +65,22 @@ export type ImportCsvResult = {
   format: string;
 };
 
-export type CsvFormat = "auto" | "apple_card" | "chase" | "bofa" | "generic";
+export type CsvFormat =
+  | "auto"
+  | "apple_card"
+  | "chase"
+  | "bofa"
+  | "capital_one"
+  | "citi"
+  | "discover"
+  | "generic";
 
 export const BANK_LINKS: { label: string; url: string }[] = [
   { label: "Chase", url: "https://secure.chase.com" },
   { label: "Bank of America", url: "https://www.bankofamerica.com" },
+  { label: "Capital One", url: "https://www.capitalone.com" },
+  { label: "Citi", url: "https://www.citi.com" },
+  { label: "Discover", url: "https://www.discover.com" },
   { label: "Amex", url: "https://www.americanexpress.com" },
   { label: "Apple Card", url: "https://card.apple.com" },
 ];
@@ -81,6 +107,34 @@ export function formatPosted(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+function pad(n: number) {
+  return String(n).padStart(2, "0");
+}
+
+export function localDayKey(d: Date): string {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+export function fillSpendDays(
+  rows: FinanceDaySpend[],
+  days = 14,
+  now = new Date(),
+): FinanceDaySpend[] {
+  const byDay = new Map(rows.map((row) => [row.day.slice(0, 10), row]));
+  const out: FinanceDaySpend[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    const key = localDayKey(d);
+    const row = byDay.get(key);
+    out.push({
+      day: key,
+      spent: row?.spent ?? 0,
+      income: row?.income ?? 0,
+    });
+  }
+  return out;
 }
 
 export async function getFinanceSummary(): Promise<FinanceSummary> {

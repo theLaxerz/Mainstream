@@ -371,6 +371,7 @@
 
 .finance-totals {
   display: flex;
+  flex-wrap: wrap;
   gap: 1.25rem;
   margin-bottom: 0.85rem;
 }
@@ -407,6 +408,44 @@
   flex-wrap: wrap;
   gap: 0.35rem;
   margin-top: 0.85rem;
+}
+
+.spend-chart {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.spend-chart-svg {
+  flex-shrink: 0;
+}
+
+.finance-cats {
+  list-style: none;
+  margin: 0 0 0.7rem;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.finance-cats li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.28rem 0.55rem;
+  border-radius: 999px;
+  background: var(--row-bg);
+  border: 1px solid var(--line);
+  font-size: 0.75rem;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.finance-cats li span:last-child {
+  color: var(--accent-deep);
+  font-variant-numeric: tabular-nums;
 }
 
 .email-connector-picker {
