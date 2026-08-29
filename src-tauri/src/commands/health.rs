@@ -1,6 +1,7 @@
 //! Apple Health `export.xml` import (local file / zip).
 
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
+use crate::security::{max_health_export_bytes, validate_health_export_path};
 use chrono::{DateTime, Local, NaiveDate};
 use quick_xml::events::Event;
 use quick_xml::Reader;
@@ -55,7 +56,10 @@ fn record_day(start: &str, end: Option<&str>) -> Option<NaiveDate> {
     parse_apple_date(start).or_else(|| end.and_then(parse_apple_date))
 }
 
-fn ingest_export_xml<R: Read>(reader: R, aggs: &mut std::collections::HashMap<NaiveDate, DayAgg>) -> Result<(), DbError> {
+fn ingest_export_xml<R: Read>(
+    reader: R,
+    aggs: &mut std::collections::HashMap<NaiveDate, DayAgg>,
+) -> Result<(), DbError> {
     let mut xml = Reader::from_reader(BufReader::new(reader));
     xml.config_mut().trim_text(true);
     let mut buf = Vec::new();
@@ -116,6 +120,13 @@ fn ingest_export_xml<R: Read>(reader: R, aggs: &mut std::collections::HashMap<Na
 }
 
 fn open_export_reader(path: &Path) -> Result<Box<dyn Read>, DbError> {
+    validate_health_export_path(&path.to_string_lossy())?;
+    let meta = std::fs::metadata(path).map_err(DbError::Io)?;
+    if meta.len() > max_health_export_bytes() {
+        return Err(DbError::Message(
+            "Health export is too large to import safely".into(),
+        ));
+    }
     let lower = path
         .extension()
         .and_then(|e| e.to_str())
@@ -123,15 +134,30 @@ fn open_export_reader(path: &Path) -> Result<Box<dyn Read>, DbError> {
         .to_ascii_lowercase();
     if lower == "zip" {
         let file = File::open(path).map_err(DbError::Io)?;
-        let mut archive = ZipArchive::new(file).map_err(|e| DbError::Message(format!("zip: {e}")))?;
+        let mut archive =
+            ZipArchive::new(file).map_err(|e| DbError::Message(format!("zip: {e}")))?;
         for i in 0..archive.len() {
             let mut file = archive
                 .by_index(i)
                 .map_err(|e| DbError::Message(format!("zip entry: {e}")))?;
             let name = file.name().to_ascii_lowercase();
+            if name.contains("..") {
+                continue;
+            }
             if name.ends_with("export.xml") || name.ends_with("apple_health_export/export.xml") {
+                if file.size() > max_health_export_bytes() {
+                    return Err(DbError::Message(
+                        "Health export.xml inside zip is too large".into(),
+                    ));
+                }
+                let mut limited = (&mut file).take(max_health_export_bytes());
                 let mut buf = Vec::new();
-                file.read_to_end(&mut buf).map_err(DbError::Io)?;
+                limited.read_to_end(&mut buf).map_err(DbError::Io)?;
+                if buf.len() as u64 >= max_health_export_bytes() {
+                    return Err(DbError::Message(
+                        "Health export.xml inside zip is too large".into(),
+                    ));
+                }
                 return Ok(Box::new(std::io::Cursor::new(buf)));
             }
         }
@@ -139,10 +165,15 @@ fn open_export_reader(path: &Path) -> Result<Box<dyn Read>, DbError> {
             "Zip does not contain export.xml (Apple Health export)".into(),
         ));
     }
-    Ok(Box::new(BufReader::new(File::open(path).map_err(DbError::Io)?)))
+    let file = File::open(path).map_err(DbError::Io)?;
+    let limited = BufReader::new(file).take(max_health_export_bytes());
+    Ok(Box::new(limited))
 }
 
-fn upsert_aggs(conn: &rusqlite::Connection, aggs: &std::collections::HashMap<NaiveDate, DayAgg>) -> Result<usize, DbError> {
+fn upsert_aggs(
+    conn: &rusqlite::Connection,
+    aggs: &std::collections::HashMap<NaiveDate, DayAgg>,
+) -> Result<usize, DbError> {
     let imported_at = now_iso();
     let mut count = 0usize;
     for (day, agg) in aggs {
@@ -204,7 +235,11 @@ pub fn save_health_settings(
     export_path: String,
 ) -> Result<HealthSettings, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
-    set_setting(db.conn(), SETTING_EXPORT_PATH, export_path.trim())?;
+    let trimmed = export_path.trim();
+    if !trimmed.is_empty() {
+        validate_health_export_path(trimmed)?;
+    }
+    set_setting(db.conn(), SETTING_EXPORT_PATH, trimmed)?;
     let export_path = get_setting(db.conn(), SETTING_EXPORT_PATH)?.unwrap_or_default();
     Ok(HealthSettings { export_path })
 }
@@ -219,6 +254,7 @@ pub fn import_health_export(
         .filter(|p| !p.trim().is_empty())
         .or_else(|| get_setting(db.conn(), SETTING_EXPORT_PATH).ok().flatten())
         .ok_or_else(|| DbError::Message("Set a Health export path first.".into()))?;
+    validate_health_export_path(export_path.trim())?;
     let p = Path::new(export_path.trim());
     if !p.exists() {
         return Err(DbError::Message(format!(

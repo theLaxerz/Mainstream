@@ -7,6 +7,7 @@ import {
   listMailAccounts,
   openEmail,
   openInternetAccounts,
+  openTarget,
   saveEmailSettings,
   startEmailOauth,
   syncEmail,
@@ -395,9 +396,16 @@ export function EmailSection({ limit = 10 }: Props) {
             {connector.helpUrl ? (
               <>
                 {" "}
-                <a href={connector.helpUrl} target="_blank" rel="noreferrer">
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => {
+                    const url = connector.helpUrl;
+                    if (url) void openTarget("url", url).catch(() => {});
+                  }}
+                >
                   Learn more
-                </a>
+                </button>
               </>
             ) : null}
           </p>

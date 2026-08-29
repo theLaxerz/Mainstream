@@ -1,4 +1,5 @@
 use crate::db::DbError;
+use crate::security::{validate_app_target, validate_open_url};
 use std::process::Command;
 
 /// Open a URL or macOS app path/bundle via the system `open` command.
@@ -14,23 +15,23 @@ pub fn open_with_system(kind: &str, target: &str) -> Result<(), DbError> {
     }
 
     let status = match kind {
-        "url" => Command::new("open").arg(target).status(),
+        "url" => {
+            let target = validate_open_url(target)?;
+            Command::new("open").arg(target).status()
+        }
         "app" => {
+            let target = validate_app_target(target)?;
             // Prefer opening by path; fall back to -a / -b for names and bundle IDs.
             if target.ends_with(".app") || target.starts_with('/') {
-                Command::new("open").arg(target).status()
+                Command::new("open").arg(&target).status()
             } else if target.contains('.') && !target.contains(' ') {
                 // Likely a bundle identifier, e.g. com.apple.Safari
-                Command::new("open").args(["-b", target]).status()
+                Command::new("open").args(["-b", &target]).status()
             } else {
-                Command::new("open").args(["-a", target]).status()
+                Command::new("open").args(["-a", &target]).status()
             }
         }
-        _ => {
-            return Err(DbError::Message(
-                "kind must be 'url' or 'app'".into(),
-            ))
-        }
+        _ => return Err(DbError::Message("kind must be 'url' or 'app'".into())),
     }
     .map_err(|e| DbError::Message(format!("failed to spawn open: {e}")))?;
 

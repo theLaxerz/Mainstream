@@ -80,9 +80,7 @@ fn ring_access_token(refresh_token: &str) -> Result<String, DbError> {
         .json()
         .map_err(|e| DbError::Message(format!("ring oauth json: {e}")))?;
     if !status.is_success() {
-        return Err(DbError::Message(format!(
-            "Ring auth failed ({status}): {body}"
-        )));
+        return Err(DbError::Message(format!("Ring auth failed ({status})")));
     }
     body.get("access_token")
         .and_then(|v| v.as_str())
@@ -103,9 +101,7 @@ fn fetch_ring_devices(refresh_token: &str) -> Result<Vec<HomeDevice>, DbError> {
         .json()
         .map_err(|e| DbError::Message(format!("ring devices json: {e}")))?;
     if !status.is_success() {
-        return Err(DbError::Message(format!(
-            "Ring devices failed ({status}): {body}"
-        )));
+        return Err(DbError::Message(format!("Ring devices failed ({status})")));
     }
 
     let mut out = Vec::new();
