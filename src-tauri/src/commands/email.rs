@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Command;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 const KEYCHAIN_SERVICE: &str = "com.mainstream.lifeos.imap";
 pub(crate) const SETTING_HOST: &str = "email.imap_host";
@@ -816,7 +816,7 @@ pub fn save_email_settings(
     set_setting(db.conn(), SETTING_PORT, &port.to_string())?;
     set_setting(db.conn(), SETTING_USER, user)?;
     set_setting(db.conn(), SETTING_MAILBOX, mailbox)?;
-    set_setting(db.conn(), SETTING_PROVIDER, &infer_provider_from_host(host))?;
+    set_setting(db.conn(), SETTING_PROVIDER, &infer_provider_from_host(&host))?;
     set_setting(db.conn(), SETTING_AUTH, "password")?;
     set_setting(db.conn(), SETTING_MAILAPP_ACCOUNT, "")?;
 
@@ -835,9 +835,14 @@ pub fn save_email_settings(
 }
 
 #[tauri::command]
-pub fn sync_email(state: State<'_, DbState>) -> Result<EmailSyncResult, DbError> {
-    let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
-    sync_mailbox(db.conn())
+pub async fn sync_email(app: AppHandle) -> Result<EmailSyncResult, DbError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<DbState>();
+        let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
+        sync_mailbox(db.conn())
+    })
+    .await
+    .map_err(|e| DbError::Message(format!("Email sync task failed: {e}")))?
 }
 
 #[tauri::command]

@@ -5,16 +5,23 @@
 //! used for Informed Delivery.
 
 use crate::commands::email::{
-    load_known_contacts, parse_headers, read_settings, score_importance, upsert_email, EmailSettings,
+    load_known_contacts, read_settings, score_importance, upsert_email, EmailSettings,
     EmailSyncResult, SETTING_AUTH, SETTING_HOST, SETTING_MAILAPP_ACCOUNT, SETTING_MAILBOX,
     SETTING_PORT, SETTING_PROVIDER, SETTING_USER,
 };
 use crate::db::{set_setting, DbError, DbState};
 use rusqlite::Connection;
 use serde::Serialize;
+use std::io::Read;
 use std::path::Path;
-use std::process::Command;
-use tauri::State;
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Manager};
+
+const MAIL_LIST_TIMEOUT: Duration = Duration::from_secs(15);
+const MAIL_SYNC_TIMEOUT: Duration = Duration::from_secs(25);
+const MAIL_TIMEOUT_HINT: &str = "Mail.app did not respond in time. Finish any Mail or Outlook sign-in windows, then try again.";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -165,37 +172,110 @@ fn applescript_string(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-fn run_osascript(source: &str) -> Result<String, DbError> {
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(source)
-        .output()
-        .map_err(|e| DbError::Message(format!("osascript failed: {e}")))?;
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if output.status.success() {
-        return Ok(stdout);
-    }
+fn wrap_with_timeout(source: &str, timeout: Duration) -> String {
+    let secs = timeout.as_secs().saturating_sub(2).max(4);
+    format!("with timeout of {secs} seconds\n{source}\nend timeout")
+}
+
+pub fn osascript_failure_message(stderr: &str, stdout: &str) -> String {
     let combined = format!("{stderr}\n{stdout}").to_ascii_lowercase();
     if combined.contains("not authorized")
         || combined.contains("(-1743)")
         || combined.contains("not allowed to send apple events")
         || combined.contains("osstatus error 1")
     {
-        return Err(DbError::Message(
-            "Mainstream needs Automation access to control Mail. System Settings → Privacy & Security → Automation → enable Mail for Mainstream.".into(),
-        ));
+        return "Mainstream needs Automation access to control Mail. System Settings → Privacy & Security → Automation → enable Mail for Mainstream.".into();
+    }
+    if combined.contains("appleevent timed out")
+        || combined.contains("apple event timed out")
+        || combined.contains("(-1712)")
+    {
+        return MAIL_TIMEOUT_HINT.into();
     }
     if combined.contains("application isn’t running")
         || combined.contains("application isn't running")
         || combined.contains("(-609)")
     {
-        return Err(DbError::Message(
-            "Mail.app did not respond. Open Mail once, then try again.".into(),
-        ));
+        return "Mail.app did not respond. Open Mail once, then try again.".into();
     }
-    let detail = if stderr.is_empty() { stdout } else { stderr };
-    Err(DbError::Message(format!("Mail.app: {detail}")))
+    let detail = if stderr.trim().is_empty() {
+        stdout.trim()
+    } else {
+        stderr.trim()
+    };
+    if detail.is_empty() {
+        "Mail.app: unknown error".into()
+    } else {
+        format!("Mail.app: {detail}")
+    }
+}
+
+fn run_osascript(source: &str) -> Result<String, DbError> {
+    run_osascript_timed(source, MAIL_LIST_TIMEOUT)
+}
+
+fn run_osascript_timed(source: &str, timeout: Duration) -> Result<String, DbError> {
+    let wrapped = wrap_with_timeout(source, timeout);
+    let mut child = Command::new("osascript")
+        .arg("-e")
+        .arg(&wrapped)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| DbError::Message(format!("osascript failed: {e}")))?;
+
+    let mut stdout_pipe = child
+        .stdout
+        .take()
+        .ok_or_else(|| DbError::Message("osascript stdout missing".into()))?;
+    let mut stderr_pipe = child
+        .stderr
+        .take()
+        .ok_or_else(|| DbError::Message("osascript stderr missing".into()))?;
+
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let stdout_h = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = stdout_pipe.read_to_end(&mut buf);
+            buf
+        });
+        let stderr_h = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = stderr_pipe.read_to_end(&mut buf);
+            buf
+        });
+        let stdout = stdout_h.join().unwrap_or_default();
+        let stderr = stderr_h.join().unwrap_or_default();
+        let _ = tx.send((stdout, stderr));
+    });
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let (stdout_raw, stderr_raw) = rx.recv().unwrap_or_default();
+                let stdout = String::from_utf8_lossy(&stdout_raw).trim().to_string();
+                let stderr = String::from_utf8_lossy(&stderr_raw).trim().to_string();
+                if status.success() {
+                    return Ok(stdout);
+                }
+                return Err(DbError::Message(osascript_failure_message(
+                    &stderr, &stdout,
+                )));
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(DbError::Message(MAIL_TIMEOUT_HINT.into()));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(40)),
+            Err(e) => {
+                let _ = child.kill();
+                return Err(DbError::Message(format!("osascript failed: {e}")));
+            }
+        }
+    }
 }
 
 fn is_permission_error(err: &DbError) -> bool {
@@ -264,7 +344,8 @@ tell application "Mail"
     end try
   end if
   if theBox is missing value then error "No mailbox found for that account."
-  set theMsgs to (messages of theBox whose read status is false)
+  set cutoff to (current date) - 14 * days
+  set theMsgs to (messages of theBox whose date received > cutoff and read status is false)
   set out to ""
   set i to 0
   repeat with m in theMsgs
@@ -351,7 +432,7 @@ return {posix}
 }
 
 pub fn fetch_unread(account: &str, limit: usize) -> Result<Vec<MailAppMessage>, DbError> {
-    let raw = run_osascript(&list_unread_script(account, limit))?;
+    let raw = run_osascript_timed(&list_unread_script(account, limit), MAIL_SYNC_TIMEOUT)?;
     Ok(parse_message_rows(&raw)
         .into_iter()
         .map(|mut msg| {
@@ -363,7 +444,7 @@ pub fn fetch_unread(account: &str, limit: usize) -> Result<Vec<MailAppMessage>, 
 }
 
 pub fn fetch_informed_candidates(account: &str, limit: usize) -> Result<Vec<MailAppMessage>, DbError> {
-    let raw = run_osascript(&list_informed_script(account, limit))?;
+    let raw = run_osascript_timed(&list_informed_script(account, limit), MAIL_SYNC_TIMEOUT)?;
     Ok(parse_message_rows(&raw))
 }
 
@@ -371,11 +452,10 @@ pub fn fetch_source(account: &str, id: i64, dest: &Path) -> Result<Vec<u8>, DbEr
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    run_osascript(&source_script(
-        account,
-        id,
-        &dest.to_string_lossy(),
-    ))?;
+    run_osascript_timed(
+        &source_script(account, id, &dest.to_string_lossy()),
+        MAIL_SYNC_TIMEOUT,
+    )?;
     Ok(std::fs::read(dest)?)
 }
 
@@ -452,15 +532,13 @@ pub fn sync_mailapp_inbox(conn: &Connection) -> Result<EmailSyncResult, DbError>
 }
 
 #[tauri::command]
-pub fn list_mail_accounts() -> Result<MailAppAccountsResult, DbError> {
-    list_accounts()
+pub async fn list_mail_accounts() -> Result<MailAppAccountsResult, DbError> {
+    tauri::async_runtime::spawn_blocking(list_accounts)
+        .await
+        .map_err(|e| DbError::Message(format!("Mail.app task failed: {e}")))?
 }
 
-#[tauri::command]
-pub fn use_mail_account(
-    state: State<'_, DbState>,
-    name: String,
-) -> Result<EmailSettings, DbError> {
+fn connect_mail_account(state: &DbState, name: String) -> Result<EmailSettings, DbError> {
     let name = name.trim().to_string();
     if name.is_empty() {
         return Err(DbError::Message("Mail account name is required".into()));
@@ -494,6 +572,19 @@ pub fn use_mail_account(
     set_setting(db.conn(), SETTING_HOST, "mail.app")?;
     set_setting(db.conn(), SETTING_PORT, "0")?;
     read_settings(db.conn())
+}
+
+#[tauri::command]
+pub async fn use_mail_account(
+    app: AppHandle,
+    name: String,
+) -> Result<EmailSettings, DbError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<DbState>();
+        connect_mail_account(&state, name)
+    })
+    .await
+    .map_err(|e| DbError::Message(format!("Mail.app task failed: {e}")))?
 }
 
 #[tauri::command]
@@ -559,5 +650,15 @@ mod tests {
         assert_eq!(rows[0].id, 42);
         assert_eq!(rows[0].subject, "Hello");
         assert_eq!(rows[0].message_id.as_deref(), Some("<id@mail>"));
+    }
+
+    #[test]
+    fn maps_mail_timeout_and_permission_errors() {
+        assert!(osascript_failure_message("AppleEvent timed out. (-1712)", "")
+            .contains("did not respond in time"));
+        assert!(osascript_failure_message("not authorized to send Apple events", "")
+            .contains("Automation"));
+        assert!(osascript_failure_message("Application isn’t running. (-609)", "")
+            .contains("Open Mail"));
     }
 }

@@ -510,6 +510,21 @@ export function EmailSection({ limit = 10 }: Props) {
                 ]}
               />
             ) : null}
+            {accounts?.status === "unavailable" ? (
+              <PermissionCallout
+                title="Mail.app didn’t respond"
+                body={
+                  accounts.detail ??
+                  "Mail may be busy signing into Outlook. Finish that window, then try again."
+                }
+                steps={[
+                  "Finish any Mail or Outlook sign-in dialogs",
+                  "Return here and try again",
+                ]}
+                actionLabel="Try again"
+                onAction={() => void loadAccounts()}
+              />
+            ) : null}
             {mailAppList(accounts?.accounts ?? [])}
             {oauthCard("google")}
             {oauthCard("microsoft")}

@@ -248,7 +248,7 @@ pub fn validate_health_export_path(raw: &str) -> Result<(), DbError> {
         .to_ascii_lowercase();
     if ext != "xml" && ext != "zip" {
         return Err(deny(
-            "Health export must be an Apple Health export.xml or .zip".into(),
+            "Health export must be an Apple Health export.xml or .zip",
         ));
     }
     Ok(())
