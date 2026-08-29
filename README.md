@@ -2,7 +2,7 @@
 
 macOS Life OS — a local-first personal command center built with **Tauri 2 + React + TypeScript**.
 
-Clock hero with a greeting and digital readout, weather, EventKit month agenda, unread Messages, important email (IMAP), USPS Informed Delivery mail (OCR), tailored news, local finance ledger with a spend chart, notes, **Health** (Apple Health export), **Home** (Ring & Blink), **YouTube** (channel RSS), **Streaming** (what's hot / new via TMDB), and app/website shortcuts. Data stays on-device; the web is only used for RSS, weather, and launching shortcuts.
+Clock hero with weather, unread Messages, important email (Google / Microsoft browser sign-in or Mail.app), USPS Informed Delivery mail (OCR), tailored news, local finance ledger, notes, **Health** (Apple Health export), **Home** (Ring & Blink), **YouTube** (channel RSS), **Streaming** (what's hot / new via TMDB), and app/website shortcuts. Data stays on-device; the web is only used for RSS, weather, OAuth sign-in, and launching shortcuts.
 
 ## Run (dev)
 
@@ -48,13 +48,20 @@ Calendar reads upcoming events through EventKit. macOS requires **Calendars** ac
 
 The first request has to come from Mainstream itself. After that, Mainstream shows up in the Calendars list so you can toggle it.
 
-### Email (IMAP)
+### Email
 
-IMAP host/user live in SQLite settings; passwords are stored only in the **macOS Keychain**. Use an app-specific password for iCloud or Gmail.
+Google and Microsoft use **browser sign-in** (PKCE). Mainstream opens your browser so you can click the account already signed in on this Mac. Refresh tokens stay in the **macOS Keychain**; mail is still fetched over IMAP with XOAUTH2.
+
+You can also click an account already configured in **Mail.app** (Internet Accounts). iCloud / Yahoo / Fastmail still use IMAP + an app password.
+
+One-time OAuth app IDs (public desktop / public client — no secret):
+
+- Google: Cloud Console → APIs & Services → Credentials → Desktop client
+- Microsoft: Azure app registration → public client / mobile & desktop, redirect `http://127.0.0.1`
 
 ### Physical mail (Informed Delivery)
 
-The **Mail** module searches your synced mailbox for USPS Informed Delivery digests, extracts envelope scan images, and runs **macOS Vision OCR** locally. Configure Email (IMAP) first, then use **Mail → Sync**. Scan images are cached under your app data directory.
+The **Mail** module searches your synced mailbox for USPS Informed Delivery digests, extracts envelope scan images, and runs **macOS Vision OCR** locally. Connect Email first, then use **Mail → Sync**. Scan images are cached under your app data directory.
 
 ### Health, Home, YouTube, Streaming
 
@@ -82,6 +89,7 @@ SQLite lives in the app data directory as `app.db` (created on first launch).
 ## Known limits (v1)
 
 - macOS only
+- Google / Microsoft browser sign-in needs a one-time public OAuth client ID (Desktop / public client). Mail.app accounts do not.
 - No send/reply from Messages inside Mainstream
 - Blink uses the unofficial OAuth API (same as Home Assistant / blinkpy); Amazon does not offer an official third-party camera API
 - No Plaid / live bank APIs — CSV import + local ledger only

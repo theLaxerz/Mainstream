@@ -3,6 +3,7 @@ import type {
   EmailMessage,
   EmailSettings,
   EmailSyncResult,
+  MailAppAccountsResult,
   PhysicalMailPiece,
   PhysicalMailSyncResult,
   HealthDay,
@@ -150,6 +151,34 @@ export async function saveEmailSettings(input: {
 
 export async function syncEmail(): Promise<EmailSyncResult> {
   return invoke("sync_email");
+}
+
+export async function disconnectEmail(): Promise<EmailSettings> {
+  return invoke("disconnect_email");
+}
+
+export async function startEmailOauth(input: {
+  provider: "google" | "microsoft";
+  clientId?: string;
+}): Promise<EmailSettings> {
+  return invoke("start_email_oauth", {
+    input: {
+      provider: input.provider,
+      clientId: input.clientId ?? null,
+    },
+  });
+}
+
+export async function listMailAccounts(): Promise<MailAppAccountsResult> {
+  return invoke("list_mail_accounts");
+}
+
+export async function useMailAccount(name: string): Promise<EmailSettings> {
+  return invoke("use_mail_account", { name });
+}
+
+export async function openInternetAccounts(): Promise<void> {
+  return invoke("open_internet_accounts");
 }
 
 export async function listImportantEmails(limit?: number): Promise<EmailMessage[]> {

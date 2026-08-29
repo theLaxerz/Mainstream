@@ -1,7 +1,5 @@
 export type EmailConnectorId =
   | "icloud"
-  | "gmail"
-  | "outlook"
   | "yahoo"
   | "fastmail"
   | "custom";
@@ -13,7 +11,6 @@ export type EmailConnector = {
   host: string;
   port: number;
   mailbox: string;
-  /** Shown in the connect flow — app-password / OAuth hints. */
   setupHint: string;
   helpUrl?: string;
 };
@@ -29,28 +26,6 @@ export const EMAIL_CONNECTORS: EmailConnector[] = [
     setupHint:
       "Create an app-specific password at appleid.apple.com, then paste it below.",
     helpUrl: "https://support.apple.com/en-us/HT204397",
-  },
-  {
-    id: "gmail",
-    name: "Gmail",
-    description: "Google account with an app password",
-    host: "imap.gmail.com",
-    port: 993,
-    mailbox: "INBOX",
-    setupHint:
-      "Enable IMAP in Gmail settings and use a Google app password (2FA required).",
-    helpUrl: "https://support.google.com/mail/answer/7126229",
-  },
-  {
-    id: "outlook",
-    name: "Outlook / Microsoft 365",
-    description: "Outlook.com or work/school Microsoft mail",
-    host: "outlook.office365.com",
-    port: 993,
-    mailbox: "INBOX",
-    setupHint:
-      "Use your full email as the username. If MFA is on, create an app password in your Microsoft account security settings.",
-    helpUrl: "https://support.microsoft.com/en-us/office/pop-imap-and-smtp-settings",
   },
   {
     id: "yahoo",
@@ -87,4 +62,23 @@ export function getEmailConnector(id: EmailConnectorId): EmailConnector {
   return (
     EMAIL_CONNECTORS.find((c) => c.id === id) ?? EMAIL_CONNECTORS[EMAIL_CONNECTORS.length - 1]!
   );
+}
+
+export function connectorIdForHost(host: string): EmailConnectorId {
+  const match = EMAIL_CONNECTORS.find(
+    (c) => c.host && c.host.toLowerCase() === host.trim().toLowerCase(),
+  );
+  return match?.id ?? "custom";
+}
+
+export function emailAuthLabel(settings: {
+  auth: string;
+  provider: string;
+}): string {
+  if (settings.auth === "mailapp") return "Mail.app";
+  if (settings.auth === "oauth" && settings.provider === "microsoft") {
+    return "Microsoft (browser)";
+  }
+  if (settings.auth === "oauth") return "Google (browser)";
+  return "IMAP";
 }
