@@ -1,6 +1,6 @@
 //! Orchestrates a full dashboard refresh across all sync-capable modules.
 
-use crate::commands::email::{read_settings, sync_imap};
+use crate::commands::email::{email_is_configured, sync_mailbox};
 use crate::commands::health::try_import_configured;
 use crate::commands::home::fetch_home_devices;
 use crate::commands::mail::sync_informed_delivery;
@@ -55,11 +55,7 @@ fn push_error(modules: &mut Vec<ModuleRefreshResult>, module: &str, detail: impl
 }
 
 fn email_configured(conn: &Connection) -> bool {
-    read_settings(conn)
-        .map(|s| {
-            !s.host.trim().is_empty() && !s.user.trim().is_empty() && s.has_password
-        })
-        .unwrap_or(false)
+    email_is_configured(conn)
 }
 
 fn youtube_configured(conn: &Connection) -> bool {
@@ -89,7 +85,7 @@ fn refresh_email(state: &DbState, modules: &mut Vec<ModuleRefreshResult>) {
     };
 
     if !configured {
-        push_skipped(modules, "email", "IMAP not configured");
+        push_skipped(modules, "email", "Email not connected");
         return;
     }
 
@@ -101,7 +97,7 @@ fn refresh_email(state: &DbState, modules: &mut Vec<ModuleRefreshResult>) {
                 return;
             }
         };
-        sync_imap(db.conn())
+        sync_mailbox(db.conn())
     };
 
     match result {
@@ -130,7 +126,7 @@ fn refresh_mail(state: &DbState, modules: &mut Vec<ModuleRefreshResult>) {
     };
 
     if !configured {
-        push_skipped(modules, "mail", "Configure Email (IMAP) first");
+        push_skipped(modules, "mail", "Connect Email first");
         return;
     }
 
