@@ -202,6 +202,9 @@ pub fn search_weather_places(query: String) -> Result<Vec<WeatherPlace>, DbError
     if q.len() < 2 {
         return Ok(vec![]);
     }
+    if q.len() > 100 {
+        return Err(DbError::Message("search query is too long".into()));
+    }
     let url = format!(
         "https://geocoding-api.open-meteo.com/v1/search?name={}&count=6&language=en&format=json",
         urlencoding::encode(q)

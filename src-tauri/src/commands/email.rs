@@ -1,6 +1,6 @@
 use crate::commands::open::open_with_system;
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
-use crate::security::validate_imap_host;
+use crate::security::{validate_imap_host, validate_imap_mailbox, validate_imap_port};
 use imap::types::Fetch;
 use keyring::Entry;
 use mailparse::{addrparse, parse_mail, MailHeaderMap};
@@ -632,7 +632,7 @@ pub(crate) fn open_imap_session(conn: &Connection) -> Result<(ImapSession, Email
     let mailbox = if settings.mailbox.trim().is_empty() {
         "INBOX".to_string()
     } else {
-        settings.mailbox.trim().to_string()
+        validate_imap_mailbox(settings.mailbox.trim())?
     };
     if is_junk_mailbox(&mailbox) {
         return Err(DbError::Message(
@@ -643,7 +643,8 @@ pub(crate) fn open_imap_session(conn: &Connection) -> Result<(ImapSession, Email
     let tls = TlsConnector::builder()
         .build()
         .map_err(|e| DbError::Message(format!("TLS init failed: {e}")))?;
-    let port = if settings.port == 0 { 993 } else { settings.port };
+    let port = validate_imap_port(if settings.port == 0 { 993 } else { settings.port })?;
+    let _ = validate_imap_host(&settings.host)?;
     let client = imap::connect((settings.host.as_str(), port), settings.host.as_str(), &tls)
         .map_err(|e| DbError::Message(format!("IMAP connect failed: {e}")))?;
 
@@ -680,7 +681,7 @@ pub(crate) fn sync_imap(conn: &Connection) -> Result<EmailSyncResult, DbError> {
     let mailbox = if settings.mailbox.trim().is_empty() {
         "INBOX".to_string()
     } else {
-        settings.mailbox.trim().to_string()
+        validate_imap_mailbox(settings.mailbox.trim())?
     };
 
     // Skip obvious junk folders if the configured mailbox is INBOX — we only sync the chosen mailbox.
@@ -802,20 +803,22 @@ pub fn save_email_settings(
             "IMAP host and username are required".into(),
         ));
     }
-    let port = input.port.unwrap_or(993);
-    let mailbox = input
-        .mailbox
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("INBOX");
+    let port = validate_imap_port(input.port.unwrap_or(993))?;
+    let mailbox = validate_imap_mailbox(
+        input
+            .mailbox
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("INBOX"),
+    )?;
 
     let previous_user = get_setting(db.conn(), SETTING_USER)?.unwrap_or_default();
 
     set_setting(db.conn(), SETTING_HOST, &host)?;
     set_setting(db.conn(), SETTING_PORT, &port.to_string())?;
     set_setting(db.conn(), SETTING_USER, user)?;
-    set_setting(db.conn(), SETTING_MAILBOX, mailbox)?;
+    set_setting(db.conn(), SETTING_MAILBOX, &mailbox)?;
     set_setting(db.conn(), SETTING_PROVIDER, &infer_provider_from_host(&host))?;
     set_setting(db.conn(), SETTING_AUTH, "password")?;
     set_setting(db.conn(), SETTING_MAILAPP_ACCOUNT, "")?;
