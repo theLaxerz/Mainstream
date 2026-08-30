@@ -2,7 +2,7 @@
 
 macOS Life OS — a local-first personal command center built with **Tauri 2 + React + TypeScript**.
 
-Clock hero with weather, unread Messages, important email (Google / Microsoft browser sign-in or Mail.app), USPS Informed Delivery mail (OCR), tailored news, local finance ledger, notes, **Health** (Apple Health export), **Home** (Ring & Blink), **YouTube** (channel RSS), **Streaming** (what's hot / new via TMDB), and app/website shortcuts. Data stays on-device; the web is only used for RSS, weather, OAuth sign-in, and launching shortcuts.
+Clock hero with weather, unread Messages, important email (Google / Microsoft browser sign-in or Mail.app), USPS Informed Delivery mail (OCR), tailored news, local finance ledger, **Tasks**, notes, **Health** (Apple Health export), **Home** (Ring & Blink), **YouTube** (channel RSS), **Streaming** (what's hot / new via TMDB), and app/website shortcuts. Data stays on-device; the web is only used for RSS, weather, OAuth sign-in, and launching shortcuts.
 
 ## Run (dev)
 
@@ -71,13 +71,14 @@ The **Mail** module searches your synced mailbox for USPS Informed Delivery dige
 - **Streaming** — Free [TMDB](https://www.themoviedb.org/) API key; pick services (Prime, Apple TV+, Paramount+, Peacock, AMC+, Netflix, Max, Disney+, Hulu). A **Tonight** featured title sits above **What's hot** and **New & available**.
 - **Weather** — Pin a city in the hero; [Open-Meteo](https://open-meteo.com/) forecast, no API key.
 - **Finance** — Local accounts + CSV import (Apple Card, Chase, Bank of America, Capital One, Citi, Discover, or generic). The card shows a 14-day spend chart, this-month total, and category chips. No bank APIs.
+- **Tasks** — Local due list beside Calendar (overdue / today / upcoming / someday). Quick-add with Today / Tomorrow chips, high priority, and complete-in-place. ⌘K can capture a task due today. No EventKit Reminders sync yet.
 
 ## Layout
 
 - Sticky **command bar**: live clock, **⌘K** palette, theme (auto / dusk / light), **Layout** customizer, **Refresh all** with last-sync status
-- **Today briefing**: next event, unread chats, important email, steps, and this-month spend — chips scroll to the matching module
+- **Today briefing**: next event, unread chats, important email, steps, this-month spend, and due tasks — chips scroll to the matching module
 - Hero calendar shows EventKit dots and a selected-day agenda (looks back within the visible month)
-- Shortcuts: `⌘K` command palette · `⌘,` customize layout · `⌘⇧R` refresh all modules
+- Shortcuts: `⌘K` command palette (jump, note, or task) · `⌘,` customize layout · `⌘⇧R` refresh all modules
 - Quiet auto-refresh every 15 minutes (pauses while the window is hidden); modules show last-synced time
 - Layout prefs (enable/order/width/item counts) persist in SQLite settings
 - `src/` — React UI (dashboard, clock, weather, module sections, command palette)
@@ -93,11 +94,12 @@ SQLite lives in the app data directory as `app.db` (created on first launch).
 - No send/reply from Messages inside Mainstream
 - Blink uses the unofficial OAuth API (same as Home Assistant / blinkpy); Amazon does not offer an official third-party camera API
 - No Plaid / live bank APIs — CSV import + local ledger only
+- Tasks are local SQLite — they do not sync with Apple Reminders yet
 - No multi-user sync or cloud backup
 
 ## Later
 
-- Reminders / Tasks module
+- EventKit Reminders sync (read/write when TCC allows)
 - In-app Messages reply
 - First-run onboarding
 - Signing, notarization, and auto-update

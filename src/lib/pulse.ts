@@ -8,13 +8,15 @@ import {
 import { formatMoney, getFinanceSummary } from "./finance";
 import { groupUnreadByChat } from "./messageGroups";
 import { listAllUnreadMessages } from "./messages";
+import { briefingDetail, getTaskSummary } from "./tasks";
 
 export type PulseChipKind =
   | "calendar"
   | "messages"
   | "email"
   | "health"
-  | "finance";
+  | "finance"
+  | "tasks";
 
 export type PulseChip = {
   kind: PulseChipKind;
@@ -84,6 +86,15 @@ export async function loadDashboardPulse(): Promise<DashboardPulse> {
       detail: `${formatMoney(finance.spentThisMonth)} this month`,
       moduleId: "finance",
     });
+    const tasks = await getTaskSummary();
+    if (tasks.open > 0 || tasks.overdue > 0) {
+      chips.push({
+        kind: "tasks",
+        label: "Tasks",
+        detail: briefingDetail(tasks),
+        moduleId: "tasks",
+      });
+    }
     return {
       greeting: greetingFor(new Date()),
       nextEvent,
@@ -100,6 +111,7 @@ export async function loadDashboardPulse(): Promise<DashboardPulse> {
     listImportantEmails(20),
     healthTodaySummary(),
     getFinanceSummary(),
+    getTaskSummary(),
   ]);
 
   const calendar =
@@ -109,6 +121,7 @@ export async function loadDashboardPulse(): Promise<DashboardPulse> {
   const emails = settled[2].status === "fulfilled" ? settled[2].value : [];
   const health = settled[3].status === "fulfilled" ? settled[3].value : null;
   const finance = settled[4].status === "fulfilled" ? settled[4].value : null;
+  const tasks = settled[5].status === "fulfilled" ? settled[5].value : null;
 
   const nextEvent =
     calendar && calendar.access.status === "ok"
@@ -178,6 +191,15 @@ export async function loadDashboardPulse(): Promise<DashboardPulse> {
       label: "Spent",
       detail: `${formatMoney(spentThisMonth)} this month`,
       moduleId: "finance",
+    });
+  }
+
+  if (tasks && (tasks.open > 0 || tasks.overdue > 0)) {
+    chips.push({
+      kind: "tasks",
+      label: "Tasks",
+      detail: briefingDetail(tasks),
+      moduleId: "tasks",
     });
   }
 

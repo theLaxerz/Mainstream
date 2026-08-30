@@ -225,6 +225,21 @@ impl Db {
 
             CREATE INDEX IF NOT EXISTS idx_streaming_items
                 ON streaming_items(provider_id, kind, score DESC);
+
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                notes TEXT NOT NULL DEFAULT '',
+                due_on TEXT,
+                priority INTEGER NOT NULL DEFAULT 0,
+                completed INTEGER NOT NULL DEFAULT 0,
+                completed_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_tasks_open
+                ON tasks(completed, due_on, priority DESC, id);
             "#,
         )?;
         Self::ensure_column(

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createNote, listShortcuts, openShortcut } from "../lib/api";
+import { createTask, shiftLocalDate } from "../lib/tasks";
 import { MODULE_IDS, MODULE_META, type ModuleId } from "../lib/moduleLayout";
 import { requestDashboardRefresh } from "../lib/refresh";
 import type { Shortcut } from "../lib/types";
@@ -124,6 +125,20 @@ export function CommandPalette({ open, onClose, handlers }: Props) {
           onClose();
         },
       },
+      {
+        id: "act-task",
+        group: "Actions",
+        label: query.trim() ? `Task: ${noteTitle}` : "Add a task for today",
+        hint: "Uses the search text · due today",
+        run: async () => {
+          await createTask({
+            title: noteTitle,
+            dueOn: shiftLocalDate(0),
+          });
+          requestDashboardRefresh();
+          onClose();
+        },
+      },
     ].filter((item) => matches(query, item.label, item.hint));
 
     return [...goTo, ...shortcutItems, ...actions];
@@ -183,7 +198,7 @@ export function CommandPalette({ open, onClose, handlers }: Props) {
           className="palette-input"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Jump to a module, open a shortcut, or capture a note"
+          placeholder="Jump to a module, open a shortcut, or capture a note or task"
           aria-label="Command search"
         />
         <ul className="palette-list">

@@ -318,6 +318,7 @@ pub fn refresh_dashboard(state: State<'_, DbState>) -> Result<DashboardRefreshRe
     );
     push_skipped(&mut modules, "finance", "Local ledger — no remote sync");
     push_skipped(&mut modules, "notes", "Local notes — no remote sync");
+    push_skipped(&mut modules, "tasks", "Local tasks — no remote sync");
     push_skipped(&mut modules, "shortcuts", "Local shortcuts — no remote sync");
 
     Ok(DashboardRefreshResult {

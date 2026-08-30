@@ -15,5 +15,6 @@ pub mod refresh;
 pub mod settings;
 pub mod shortcuts;
 pub mod streaming;
+pub mod tasks;
 pub mod weather;
 pub mod youtube;

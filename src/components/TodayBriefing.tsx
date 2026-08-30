@@ -13,6 +13,7 @@ const KIND_HINT: Record<PulseChipKind, string> = {
   email: "Jump to Email",
   health: "Jump to Health",
   finance: "Jump to Finance",
+  tasks: "Jump to Tasks",
 };
 
 export function TodayBriefing() {
@@ -49,7 +50,7 @@ export function TodayBriefing() {
             ? "Your day, gathered in one calm place."
             : pulse.chips.length > 0
               ? "Nothing urgent — the rest of the day is yours."
-              : "Connect Calendar, Messages, Email, or Health and this becomes your morning briefing."}
+              : "Connect Calendar, Messages, Email, or Health — or add a task — and this becomes your morning briefing."}
         </p>
       </div>
       {pulse.chips.length > 0 ? (

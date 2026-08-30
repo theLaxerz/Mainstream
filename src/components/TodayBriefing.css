@@ -130,6 +130,10 @@
   color: var(--accent);
 }
 
+.today-chip.kind-tasks .today-chip-label {
+  color: var(--accent-deep);
+}
+
 html[data-theme="dusk"] .today-chip.kind-health .today-chip-label {
   color: #7dcea0;
 }
