@@ -111,6 +111,13 @@ pub fn run() {
             commands::finance::delete_transaction,
             commands::finance::get_finance_summary,
             commands::finance::import_transactions_csv,
+            commands::tasks::list_tasks,
+            commands::tasks::task_summary,
+            commands::tasks::create_task,
+            commands::tasks::update_task,
+            commands::tasks::set_task_completed,
+            commands::tasks::delete_task,
+            commands::tasks::clear_completed_tasks,
             commands::refresh::refresh_dashboard,
         ])
         .run(tauri::generate_context!())

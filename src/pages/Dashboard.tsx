@@ -15,6 +15,7 @@ import { NewsSection } from "../components/NewsSection";
 import { NotesSection } from "../components/NotesSection";
 import { ShortcutsSection } from "../components/ShortcutsSection";
 import { StreamingSection } from "../components/StreamingSection";
+import { TasksSection } from "../components/TasksSection";
 import { TodayBriefing } from "../components/TodayBriefing";
 import { Weather } from "../components/Weather";
 import { YouTubeSection } from "../components/YouTubeSection";
@@ -52,6 +53,8 @@ function renderModule(entry: ModuleLayoutEntry): ReactNode {
       return <MessagesSection limit={listLimit} />;
     case "calendar":
       return <CalendarSection limit={listLimit} />;
+    case "tasks":
+      return <TasksSection limit={listLimit} />;
     case "email":
       return <EmailSection limit={listLimit} />;
     case "mail":

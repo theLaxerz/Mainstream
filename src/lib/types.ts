@@ -6,6 +6,25 @@ export type Note = {
   updatedAt: string;
 };
 
+export type Task = {
+  id: number;
+  title: string;
+  notes: string;
+  dueOn: string | null;
+  priority: number;
+  completed: boolean;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TaskSummary = {
+  open: number;
+  overdue: number;
+  dueToday: number;
+  upcoming: number;
+};
+
 export type ShortcutKind = "url" | "app";
 
 export type Shortcut = {

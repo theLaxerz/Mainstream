@@ -1,0 +1,162 @@
+.tasks-quick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: -0.2rem 0 0.75rem;
+}
+
+.tasks-chip {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  color: var(--ink-soft);
+  border-radius: 999px;
+  padding: 0.32rem 0.7rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    transform 0.15s ease;
+}
+
+.tasks-chip:hover {
+  border-color: rgba(201, 120, 42, 0.4);
+  color: var(--ink);
+}
+
+.tasks-chip.is-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.tasks-chip.is-high.is-on {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+}
+
+.tasks-date-input {
+  flex: 0 0 auto;
+  padding: 0.32rem 0.55rem;
+  font-size: 0.78rem;
+  min-width: 8.5rem;
+}
+
+.tasks-group {
+  margin-bottom: 0.7rem;
+}
+
+.tasks-group:last-child {
+  margin-bottom: 0;
+}
+
+.tasks-group-label {
+  margin: 0 0 0.35rem 0.1rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.tasks-group.is-overdue .tasks-group-label {
+  color: var(--danger);
+}
+
+.tasks-group.is-today .tasks-group-label {
+  color: var(--accent-deep);
+}
+
+.tasks-list .task-row {
+  align-items: center;
+}
+
+.task-check {
+  appearance: none;
+  flex: 0 0 1.35rem;
+  width: 1.35rem;
+  height: 1.35rem;
+  margin-top: 0.05rem;
+  border-radius: 999px;
+  border: 1.5px solid rgba(31, 122, 116, 0.45);
+  background: var(--surface-strong);
+  color: white;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    transform 0.15s ease;
+}
+
+.task-check:hover {
+  transform: scale(1.06);
+  border-color: var(--teal);
+}
+
+.task-check.is-checked {
+  background: var(--teal);
+  border-color: var(--teal);
+}
+
+.task-row.is-high {
+  border-color: rgba(201, 120, 42, 0.28);
+}
+
+.task-row.is-done .module-row-title {
+  text-decoration: line-through;
+  color: var(--ink-faint);
+}
+
+.task-row.is-done .module-row-meta {
+  color: var(--ink-faint);
+}
+
+.btn-icon.is-flagged {
+  background: rgba(201, 120, 42, 0.14);
+  border-color: rgba(201, 120, 42, 0.4);
+  color: var(--accent-deep);
+}
+
+.tasks-pulse {
+  margin: 0.7rem 0 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-deep);
+}
+
+.tasks-clear {
+  margin-top: 0.85rem;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+html[data-theme="dusk"] .task-check {
+  border-color: rgba(76, 184, 176, 0.5);
+}
+
+html[data-theme="dusk"] .tasks-chip.is-on {
+  color: #1a1208;
+}

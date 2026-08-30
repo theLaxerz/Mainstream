@@ -3,6 +3,7 @@ import { getSetting, setSetting } from "./api";
 export const MODULE_IDS = [
   "messages",
   "calendar",
+  "tasks",
   "email",
   "mail",
   "news",
@@ -47,6 +48,11 @@ export const MODULE_META: Record<
     title: "Calendar",
     eyebrow: "Upcoming",
     blurb: "Events from macOS Calendar.app",
+  },
+  tasks: {
+    title: "Tasks",
+    eyebrow: "Due",
+    blurb: "Local reminders with due dates and priorities",
   },
   email: {
     title: "Email",
@@ -105,6 +111,7 @@ const SETTING_KEY = "dashboard.layout.v1";
 export const DEFAULT_MODULE_LIMITS: Record<ModuleId, number> = {
   messages: 10,
   calendar: 8,
+  tasks: 12,
   email: 10,
   mail: 12,
   news: 8,
@@ -120,6 +127,7 @@ export const DEFAULT_MODULE_LIMITS: Record<ModuleId, number> = {
 const DEFAULT_ORDER: ModuleId[] = [
   "messages",
   "calendar",
+  "tasks",
   "email",
   "mail",
   "news",
@@ -220,7 +228,10 @@ export function normalizeLayout(raw: unknown): DashboardLayout {
     }
   }
 
-  const modules = [...byId.values()].sort((a, b) => a.order - b.order);
+  const modules = [...byId.values()].sort((a, b) => {
+    if (a.order !== b.order) return a.order - b.order;
+    return DEFAULT_ORDER.indexOf(a.id) - DEFAULT_ORDER.indexOf(b.id);
+  });
   modules.forEach((m, i) => {
     m.order = i;
   });
