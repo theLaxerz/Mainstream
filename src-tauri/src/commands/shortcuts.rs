@@ -1,4 +1,5 @@
 use crate::db::{now_iso, DbError, DbState};
+use crate::security::{validate_app_target, validate_open_url};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -42,6 +43,14 @@ fn validate_kind(kind: &str) -> Result<&str, DbError> {
     }
 }
 
+fn validate_shortcut_target(kind: &str, target: &str) -> Result<String, DbError> {
+    match kind {
+        "url" => validate_open_url(target),
+        "app" => validate_app_target(target),
+        _ => Err(DbError::Message("kind must be 'url' or 'app'".into())),
+    }
+}
+
 #[tauri::command]
 pub fn list_shortcuts(state: State<'_, DbState>) -> Result<Vec<Shortcut>, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
@@ -77,6 +86,7 @@ pub fn create_shortcut(
         return Err(DbError::Message("label and target are required".into()));
     }
     let kind = validate_kind(input.kind.trim())?.to_string();
+    let target = validate_shortcut_target(&kind, target)?;
     let sort_order = input.sort_order.unwrap_or(0);
     let created_at = now_iso();
 
@@ -90,7 +100,7 @@ pub fn create_shortcut(
         id,
         label: label.to_string(),
         kind,
-        target: target.to_string(),
+        target,
         sort_order,
         created_at,
     })
@@ -120,6 +130,7 @@ pub fn update_shortcut(
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
         .unwrap_or(existing.target);
+    let target = validate_shortcut_target(&kind, &target)?;
     let sort_order = input.sort_order.unwrap_or(existing.sort_order);
 
     db.conn().execute(
