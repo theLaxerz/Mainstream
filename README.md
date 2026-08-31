@@ -97,7 +97,11 @@ SQLite lives in the app data directory as `app.db` (created on first launch).
 
 ## Later
 
-- Reminders / Tasks module
-- In-app Messages reply
-- First-run onboarding
+See [WHATS_NEXT.md](WHATS_NEXT.md) for the living queue (looks, functionality, coolness). Short version:
+
+- First-run onboarding (permissions, weather city, inbox, TMDB)
+- Self-host Fraunces/Figtree (CSP currently blocks Google Fonts in the packaged app)
+- YouTube thumbnails, overlay title bar, menu-bar pulse
+- EventKit Reminders sync — after the open Tasks PR lands
+- In-app Messages reply (hard; keep later)
 - Signing, notarization, and auto-update
