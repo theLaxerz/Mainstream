@@ -277,6 +277,9 @@ fn seed_feeds_if_empty(conn: &Connection) -> Result<usize, DbError> {
         if url.is_empty() {
             continue;
         }
+        let Ok(url) = validate_feed_url(url) else {
+            continue;
+        };
         conn.execute(
             "INSERT OR IGNORE INTO news_prefs (feed_url, title, weight, enabled, muted)
              VALUES (?1, ?2, ?3, 1, 0)",

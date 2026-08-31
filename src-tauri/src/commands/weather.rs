@@ -1,6 +1,7 @@
 //! Current conditions via Open-Meteo (no API key).
 
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
+use crate::security::{public_http_client, validate_lat_lon, validate_weather_query};
 use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -48,11 +49,7 @@ pub struct SaveWeatherPlaceInput {
 }
 
 fn http_client() -> Result<reqwest::blocking::Client, DbError> {
-    reqwest::blocking::Client::builder()
-        .user_agent("MainstreamLifeOS/0.1 (+local; Open-Meteo)")
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| DbError::Message(format!("http client: {e}")))
+    public_http_client(15, Some("MainstreamLifeOS/0.1 (+local; Open-Meteo)"))
 }
 
 pub fn condition_for_code(code: i64) -> &'static str {
@@ -112,6 +109,7 @@ fn snapshot_fresh(snap: &WeatherSnapshot) -> bool {
 }
 
 fn fetch_forecast(place: &WeatherPlace) -> Result<WeatherSnapshot, DbError> {
+    validate_lat_lon(place.latitude, place.longitude)?;
     let units = normalize_units(Some(&place.units));
     let url = format!(
         "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&current=temperature_2m,weather_code,relative_humidity_2m,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min&temperature_unit={}&wind_speed_unit=mph&timezone=auto&forecast_days=1",
@@ -198,13 +196,14 @@ pub fn run_refresh_weather(
 
 #[tauri::command]
 pub fn search_weather_places(query: String) -> Result<Vec<WeatherPlace>, DbError> {
-    let q = query.trim();
-    if q.len() < 2 {
-        return Ok(vec![]);
-    }
+    let q = match validate_weather_query(&query) {
+        Ok(q) => q,
+        Err(_) if query.trim().len() < 2 => return Ok(vec![]),
+        Err(e) => return Err(e),
+    };
     let url = format!(
         "https://geocoding-api.open-meteo.com/v1/search?name={}&count=6&language=en&format=json",
-        urlencoding::encode(q)
+        urlencoding::encode(&q)
     );
     let client = http_client()?;
     let body = client
@@ -251,18 +250,23 @@ pub fn save_weather_place(
     state: State<'_, DbState>,
     input: SaveWeatherPlaceInput,
 ) -> Result<WeatherSnapshot, DbError> {
+    validate_lat_lon(input.latitude, input.longitude)?;
     let units = normalize_units(input.units.as_deref());
+    let name = input.name.trim();
+    if name.is_empty() {
+        return Err(DbError::Message("place name is required".into()));
+    }
+    if name.len() > 100 || name.contains(['\n', '\r', '\0']) {
+        return Err(DbError::Message("place name is invalid".into()));
+    }
     let place = WeatherPlace {
-        name: input.name.trim().to_string(),
+        name: name.to_string(),
         latitude: input.latitude,
         longitude: input.longitude,
         admin: input.admin.filter(|s| !s.trim().is_empty()),
         country: input.country.filter(|s| !s.trim().is_empty()),
         units,
     };
-    if place.name.is_empty() {
-        return Err(DbError::Message("place name is required".into()));
-    }
     {
         let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
         let json = serde_json::to_string(&place)
