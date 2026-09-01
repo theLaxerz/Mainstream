@@ -12,6 +12,7 @@ use crate::commands::email::{
 };
 use crate::commands::open::open_with_system;
 use crate::db::{get_setting, set_setting, DbError, DbState};
+use crate::security::validate_oauth_client_id;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use imap::Authenticator;
@@ -278,13 +279,14 @@ p{{margin:0;color:#3d5a63;line-height:1.45}}
 
 fn resolve_client_id(conn: &Connection, provider: &str, override_id: Option<&str>) -> Result<String, DbError> {
     if let Some(id) = override_id.map(str::trim).filter(|s| !s.is_empty()) {
+        let id = validate_oauth_client_id(id)?;
         let key = if provider == "google" {
             SETTING_GOOGLE_CLIENT_ID
         } else {
             SETTING_MICROSOFT_CLIENT_ID
         };
-        set_setting(conn, key, id)?;
-        return Ok(id.to_string());
+        set_setting(conn, key, &id)?;
+        return Ok(id);
     }
     let key = if provider == "google" {
         SETTING_GOOGLE_CLIENT_ID
@@ -292,7 +294,7 @@ fn resolve_client_id(conn: &Connection, provider: &str, override_id: Option<&str
         SETTING_MICROSOFT_CLIENT_ID
     };
     if let Some(id) = get_setting(conn, key)?.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
-        return Ok(id);
+        return validate_oauth_client_id(&id);
     }
     let env_key = if provider == "google" {
         "MAINSTREAM_GOOGLE_CLIENT_ID"
@@ -302,6 +304,7 @@ fn resolve_client_id(conn: &Connection, provider: &str, override_id: Option<&str
     if let Ok(id) = std::env::var(env_key) {
         let id = id.trim().to_string();
         if !id.is_empty() {
+            let id = validate_oauth_client_id(&id)?;
             set_setting(conn, key, &id)?;
             return Ok(id);
         }
