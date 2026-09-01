@@ -10,6 +10,7 @@ use crate::commands::email::{
     SETTING_PORT, SETTING_PROVIDER, SETTING_USER,
 };
 use crate::db::{set_setting, DbError, DbState};
+use crate::security::validate_mailapp_account_name;
 use rusqlite::Connection;
 use serde::Serialize;
 use std::io::Read;
@@ -432,7 +433,8 @@ return {posix}
 }
 
 pub fn fetch_unread(account: &str, limit: usize) -> Result<Vec<MailAppMessage>, DbError> {
-    let raw = run_osascript_timed(&list_unread_script(account, limit), MAIL_SYNC_TIMEOUT)?;
+    let account = validate_mailapp_account_name(account)?;
+    let raw = run_osascript_timed(&list_unread_script(&account, limit), MAIL_SYNC_TIMEOUT)?;
     Ok(parse_message_rows(&raw)
         .into_iter()
         .map(|mut msg| {
@@ -444,16 +446,18 @@ pub fn fetch_unread(account: &str, limit: usize) -> Result<Vec<MailAppMessage>, 
 }
 
 pub fn fetch_informed_candidates(account: &str, limit: usize) -> Result<Vec<MailAppMessage>, DbError> {
-    let raw = run_osascript_timed(&list_informed_script(account, limit), MAIL_SYNC_TIMEOUT)?;
+    let account = validate_mailapp_account_name(account)?;
+    let raw = run_osascript_timed(&list_informed_script(&account, limit), MAIL_SYNC_TIMEOUT)?;
     Ok(parse_message_rows(&raw))
 }
 
 pub fn fetch_source(account: &str, id: i64, dest: &Path) -> Result<Vec<u8>, DbError> {
+    let account = validate_mailapp_account_name(account)?;
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
     run_osascript_timed(
-        &source_script(account, id, &dest.to_string_lossy()),
+        &source_script(&account, id, &dest.to_string_lossy()),
         MAIL_SYNC_TIMEOUT,
     )?;
     Ok(std::fs::read(dest)?)
@@ -461,14 +465,14 @@ pub fn fetch_source(account: &str, id: i64, dest: &Path) -> Result<Vec<u8>, DbEr
 
 pub fn sync_mailapp_inbox(conn: &Connection) -> Result<EmailSyncResult, DbError> {
     let settings = read_settings(conn)?;
-    let account = settings
-        .mailapp_account
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| DbError::Message("Pick a Mail.app account in Email settings first.".into()))?;
-    let mailbox = mailbox_key(account);
-    let messages = fetch_unread(account, 200)?;
+    let account = validate_mailapp_account_name(
+        settings
+            .mailapp_account
+            .as_deref()
+            .unwrap_or(""),
+    )?;
+    let mailbox = mailbox_key(&account);
+    let messages = fetch_unread(&account, 200)?;
     let known = load_known_contacts();
     let mut still_unread = std::collections::HashSet::new();
     let mut fetched = 0usize;
@@ -539,10 +543,7 @@ pub async fn list_mail_accounts() -> Result<MailAppAccountsResult, DbError> {
 }
 
 fn connect_mail_account(state: &DbState, name: String) -> Result<EmailSettings, DbError> {
-    let name = name.trim().to_string();
-    if name.is_empty() {
-        return Err(DbError::Message("Mail account name is required".into()));
-    }
+    let name = validate_mailapp_account_name(&name)?;
     let accounts = list_accounts()?;
     let account = accounts
         .accounts

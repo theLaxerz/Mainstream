@@ -2,6 +2,7 @@
 
 use crate::commands::open::open_with_system;
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
+use crate::security::public_http_client;
 use chrono::{Duration, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -102,10 +103,7 @@ pub fn default_providers() -> Vec<StreamingProvider> {
 }
 
 fn http_client() -> Result<reqwest::blocking::Client, DbError> {
-    reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(25))
-        .build()
-        .map_err(|e| DbError::Message(format!("http: {e}")))
+    public_http_client(25, Some("MainstreamLifeOS/0.1 (+local; TMDB)"))
 }
 
 pub(crate) fn load_api_key(conn: &Connection) -> Result<String, DbError> {

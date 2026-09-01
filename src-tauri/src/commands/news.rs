@@ -1,6 +1,6 @@
 use crate::commands::open::open_with_system;
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
-use crate::security::{public_http_client, validate_feed_url};
+use crate::security::{public_http_client, validate_feed_url, validate_stored_http_url};
 use chrono::{DateTime, Utc};
 use feed_rs::parser;
 use rusqlite::{params, Connection};
@@ -277,6 +277,9 @@ fn seed_feeds_if_empty(conn: &Connection) -> Result<usize, DbError> {
         if url.is_empty() {
             continue;
         }
+        let Ok(url) = validate_feed_url(url) else {
+            continue;
+        };
         conn.execute(
             "INSERT OR IGNORE INTO news_prefs (feed_url, title, weight, enabled, muted)
              VALUES (?1, ?2, ?3, 1, 0)",
@@ -358,6 +361,9 @@ fn fetch_feed(
         if url.is_empty() {
             continue;
         }
+        let Ok(url) = validate_stored_http_url(&url) else {
+            continue;
+        };
 
         let summary = entry
             .summary
