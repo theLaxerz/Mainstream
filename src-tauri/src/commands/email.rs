@@ -1,6 +1,8 @@
 use crate::commands::open::open_with_system;
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
-use crate::security::validate_imap_host;
+use crate::security::{
+    validate_imap_host, validate_imap_mailbox, validate_imap_port, validate_imap_user,
+};
 use imap::types::Fetch;
 use keyring::Entry;
 use mailparse::{addrparse, parse_mail, MailHeaderMap};
@@ -629,10 +631,12 @@ pub(crate) fn open_imap_session(conn: &Connection) -> Result<(ImapSession, Email
         ));
     }
 
+    let host = validate_imap_host(&settings.host)?;
+    let user = validate_imap_user(&settings.user)?;
     let mailbox = if settings.mailbox.trim().is_empty() {
         "INBOX".to_string()
     } else {
-        settings.mailbox.trim().to_string()
+        validate_imap_mailbox(settings.mailbox.trim())?
     };
     if is_junk_mailbox(&mailbox) {
         return Err(DbError::Message(
@@ -643,8 +647,8 @@ pub(crate) fn open_imap_session(conn: &Connection) -> Result<(ImapSession, Email
     let tls = TlsConnector::builder()
         .build()
         .map_err(|e| DbError::Message(format!("TLS init failed: {e}")))?;
-    let port = if settings.port == 0 { 993 } else { settings.port };
-    let client = imap::connect((settings.host.as_str(), port), settings.host.as_str(), &tls)
+    let port = validate_imap_port(if settings.port == 0 { 993 } else { settings.port })?;
+    let client = imap::connect((host.as_str(), port), host.as_str(), &tls)
         .map_err(|e| DbError::Message(format!("IMAP connect failed: {e}")))?;
 
     let session = if settings.auth == "oauth" || settings.has_oauth {
@@ -655,20 +659,20 @@ pub(crate) fn open_imap_session(conn: &Connection) -> Result<(ImapSession, Email
         };
         let token = crate::commands::email_oauth::ensure_access_token(conn, provider)?;
         let auth = crate::commands::email_oauth::XOAuth2 {
-            user: settings.user.clone(),
+            user: user.clone(),
             token,
         };
         client
             .authenticate("XOAUTH2", &auth)
             .map_err(|e| DbError::Message(format!("IMAP sign-in failed: {}", e.0)))?
     } else {
-        let password = load_password(&settings.user)?.ok_or_else(|| {
+        let password = load_password(&user)?.ok_or_else(|| {
             DbError::Message(
                 "IMAP password missing from Keychain — save it in Email settings.".into(),
             )
         })?;
         client
-            .login(&settings.user, &password)
+            .login(&user, &password)
             .map_err(|e| DbError::Message(format!("IMAP login failed: {}", e.0)))?
     };
     Ok((session, settings))
@@ -680,7 +684,7 @@ pub(crate) fn sync_imap(conn: &Connection) -> Result<EmailSyncResult, DbError> {
     let mailbox = if settings.mailbox.trim().is_empty() {
         "INBOX".to_string()
     } else {
-        settings.mailbox.trim().to_string()
+        validate_imap_mailbox(settings.mailbox.trim())?
     };
 
     // Skip obvious junk folders if the configured mailbox is INBOX — we only sync the chosen mailbox.
@@ -796,26 +800,23 @@ pub fn save_email_settings(
 ) -> Result<EmailSettings, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
     let host = validate_imap_host(input.host.trim())?;
-    let user = input.user.trim();
-    if host.is_empty() || user.is_empty() {
-        return Err(DbError::Message(
-            "IMAP host and username are required".into(),
-        ));
-    }
-    let port = input.port.unwrap_or(993);
+    let user = validate_imap_user(input.user.trim())?;
+    let port = validate_imap_port(input.port.unwrap_or(993))?;
     let mailbox = input
         .mailbox
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .unwrap_or("INBOX");
+        .map(validate_imap_mailbox)
+        .transpose()?
+        .unwrap_or_else(|| "INBOX".into());
 
     let previous_user = get_setting(db.conn(), SETTING_USER)?.unwrap_or_default();
 
     set_setting(db.conn(), SETTING_HOST, &host)?;
     set_setting(db.conn(), SETTING_PORT, &port.to_string())?;
-    set_setting(db.conn(), SETTING_USER, user)?;
-    set_setting(db.conn(), SETTING_MAILBOX, mailbox)?;
+    set_setting(db.conn(), SETTING_USER, &user)?;
+    set_setting(db.conn(), SETTING_MAILBOX, &mailbox)?;
     set_setting(db.conn(), SETTING_PROVIDER, &infer_provider_from_host(&host))?;
     set_setting(db.conn(), SETTING_AUTH, "password")?;
     set_setting(db.conn(), SETTING_MAILAPP_ACCOUNT, "")?;
@@ -827,7 +828,7 @@ pub fn save_email_settings(
             if !previous_user.is_empty() && previous_user != user {
                 let _ = delete_password(&previous_user);
             }
-            store_password(user, password)?;
+            store_password(&user, password)?;
         }
     }
 

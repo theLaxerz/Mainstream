@@ -226,7 +226,216 @@ pub fn validate_imap_host(raw: &str) -> Result<String, DbError> {
     if host.contains(['/', '\\', ' ', '\n', '\r', '\t', '@', '\0']) {
         return Err(deny("IMAP host contains invalid characters"));
     }
+    // Block loopback / link-local / metadata. RFC1918 is allowed so a user can
+    // still point IMAP at a NAS or self-hosted mail server on their LAN.
+    if imap_host_is_blocked(host) {
+        return Err(deny("IMAP host is not allowed"));
+    }
     Ok(host.to_string())
+}
+
+fn imap_host_is_blocked(host: &str) -> bool {
+    let host = host.trim().trim_matches(|c| c == '[' || c == ']');
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty()
+        || host == "localhost"
+        || host == "localhost.localdomain"
+        || host.ends_with(".localhost")
+        || host == "metadata.google.internal"
+    {
+        return true;
+    }
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return match ip {
+            IpAddr::V4(v4) => {
+                v4.is_loopback() || v4.is_link_local() || v4.is_unspecified() || v4.is_multicast()
+            }
+            IpAddr::V6(v6) => {
+                if let Some(v4) = v6.to_ipv4_mapped() {
+                    return v4.is_loopback()
+                        || v4.is_link_local()
+                        || v4.is_unspecified()
+                        || v4.is_multicast();
+                }
+                v6.is_loopback()
+                    || v6.is_multicast()
+                    || v6.is_unspecified()
+                    || (v6.segments()[0] & 0xffc0) == 0xfe80
+            }
+        };
+    }
+    false
+}
+
+/// Implicit TLS IMAP only. Port 143 (STARTTLS) and privileged ports are rejected
+/// so a compromised webview cannot probe SMTP/HTTP/SMB via `imap::connect`.
+pub fn validate_imap_port(port: u16) -> Result<u16, DbError> {
+    if port == 993 {
+        Ok(port)
+    } else {
+        Err(deny("IMAP port must be 993 (IMAPS)"))
+    }
+}
+
+/// Mailbox name handed to IMAP `SELECT`. Rejects protocol metacharacters.
+pub fn validate_imap_mailbox(raw: &str) -> Result<String, DbError> {
+    let name = raw.trim();
+    if name.is_empty() || name.len() > 255 {
+        return Err(deny("IMAP mailbox is invalid"));
+    }
+    if name.contains(['\n', '\r', '\0', '"', '\\']) {
+        return Err(deny("IMAP mailbox contains invalid characters"));
+    }
+    Ok(name.to_string())
+}
+
+/// IMAP LOGIN / XOAUTH2 username. Rejects protocol metacharacters.
+pub fn validate_imap_user(raw: &str) -> Result<String, DbError> {
+    let user = raw.trim();
+    if user.is_empty() || user.len() > 320 {
+        return Err(deny("IMAP username is invalid"));
+    }
+    if user.contains(['\n', '\r', '\0', '\t', '"']) {
+        return Err(deny("IMAP username contains invalid characters"));
+    }
+    Ok(user.to_string())
+}
+
+/// YouTube channel IDs / handles after URL stripping.
+pub fn validate_youtube_channel_id(raw: &str) -> Result<String, DbError> {
+    let id = raw.trim();
+    if id.is_empty() || id.len() > 64 {
+        return Err(deny("YouTube channel id is invalid"));
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(deny("YouTube channel id contains invalid characters"));
+    }
+    Ok(id.to_string())
+}
+
+/// Filename stem for cached device images (`blink-123.jpg`).
+pub fn validate_cache_file_stem(raw: &str) -> Result<String, DbError> {
+    let id = raw.trim();
+    if id.is_empty() || id.len() > 128 || id.contains("..") {
+        return Err(deny("device id is invalid"));
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(deny("device id contains invalid characters"));
+    }
+    Ok(id.to_string())
+}
+
+/// DNS label used inside `https://rest-{tier}.immedia-semi.com`.
+pub fn is_safe_dns_label(raw: &str) -> bool {
+    let s = raw.trim();
+    (1..=63).contains(&s.len())
+        && !s.starts_with('-')
+        && !s.ends_with('-')
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+pub fn validate_dns_label(raw: &str, what: &str) -> Result<String, DbError> {
+    if is_safe_dns_label(raw) {
+        Ok(raw.trim().to_string())
+    } else {
+        Err(deny(format!("{what} is invalid")))
+    }
+}
+
+/// Mail.app account name interpolated into AppleScript string literals.
+pub fn validate_mailapp_account_name(raw: &str) -> Result<String, DbError> {
+    let name = raw.trim();
+    if name.is_empty() || name.len() > 200 {
+        return Err(deny("Mail account name is invalid"));
+    }
+    // Reject quote/backslash even though we escape them — keeps the AppleScript
+    // literal boring if a compromised webview supplies the account name.
+    if name.contains(['\n', '\r', '\0', '"', '\\']) {
+        return Err(deny("Mail account name contains invalid characters"));
+    }
+    Ok(name.to_string())
+}
+
+/// Public HTTP(S) article URL persisted from RSS. Blocks `javascript:` / `file:`.
+pub fn validate_stored_http_url(raw: &str) -> Result<String, DbError> {
+    let url = parse_public_http_url(raw)?;
+    Ok(url.as_str().to_string())
+}
+
+/// YouTube watch / shorts URLs stored from channel RSS.
+pub fn validate_youtube_watch_url(raw: &str) -> Result<String, DbError> {
+    let url = parse_public_https_url(raw)?;
+    let host = url
+        .host_str()
+        .unwrap_or("")
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    if !matches!(
+        host.as_str(),
+        "youtube.com" | "www.youtube.com" | "m.youtube.com" | "youtu.be" | "www.youtu.be"
+    ) {
+        return Err(deny("YouTube URL host is not allowed"));
+    }
+    Ok(url.as_str().to_string())
+}
+
+/// Google / Microsoft public OAuth client IDs pasted from IPC.
+pub fn validate_oauth_client_id(raw: &str) -> Result<String, DbError> {
+    let id = raw.trim();
+    if id.len() < 8 || id.len() > 256 {
+        return Err(deny("OAuth client ID is invalid"));
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err(deny("OAuth client ID contains invalid characters"));
+    }
+    Ok(id.to_string())
+}
+
+/// Messages chat identifier / guid handed to `open imessage://…`.
+pub fn validate_imessage_ref(raw: &str) -> Result<String, DbError> {
+    let s = raw.trim();
+    if s.is_empty() || s.len() > 256 {
+        return Err(deny("chat identifier is invalid"));
+    }
+    if s.contains(['\n', '\r', '\0', '/', '\\']) || s.contains("..") {
+        return Err(deny("chat identifier contains invalid characters"));
+    }
+    Ok(s.to_string())
+}
+
+/// Open-Meteo geocode query / pin name.
+pub fn validate_weather_query(raw: &str) -> Result<String, DbError> {
+    let q = raw.trim();
+    if q.len() < 2 {
+        return Err(deny("search query is too short"));
+    }
+    if q.len() > 100 {
+        return Err(deny("search query is too long"));
+    }
+    if q.contains(['\n', '\r', '\0']) {
+        return Err(deny("search query contains invalid characters"));
+    }
+    Ok(q.to_string())
+}
+
+pub fn validate_lat_lon(lat: f64, lon: f64) -> Result<(), DbError> {
+    if !lat.is_finite() || !lon.is_finite() {
+        return Err(deny("coordinates are invalid"));
+    }
+    if !(-90.0..=90.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
+        return Err(deny("coordinates are out of range"));
+    }
+    Ok(())
 }
 
 pub fn validate_health_export_path(raw: &str) -> Result<(), DbError> {
@@ -353,5 +562,98 @@ mod tests {
         assert!(!is_generic_setting_key("streaming.tmdb_api_key"));
         assert!(is_secret_setting_key("streaming.tmdb_api_key"));
         assert!(is_secret_setting_key("home.blink_email"));
+    }
+
+    #[test]
+    fn imap_host_blocks_loopback_and_metadata() {
+        assert!(validate_imap_host("imap.gmail.com").is_ok());
+        assert!(validate_imap_host("10.0.0.5").is_ok());
+        assert!(validate_imap_host("127.0.0.1").is_err());
+        assert!(validate_imap_host("localhost").is_err());
+        assert!(validate_imap_host("169.254.169.254").is_err());
+        assert!(validate_imap_host("::1").is_err());
+        assert!(validate_imap_host("metadata.google.internal").is_err());
+    }
+
+    #[test]
+    fn imap_port_mailbox_and_user_are_strict() {
+        assert_eq!(validate_imap_port(993).unwrap(), 993);
+        assert!(validate_imap_port(143).is_err());
+        assert!(validate_imap_port(25).is_err());
+        assert!(validate_imap_port(80).is_err());
+        assert!(validate_imap_mailbox("INBOX").is_ok());
+        assert!(validate_imap_mailbox("INBOX\r\nUID SEARCH ALL").is_err());
+        assert!(validate_imap_mailbox("folder\"name").is_err());
+        assert!(validate_imap_user("ada@gmail.com").is_ok());
+        assert!(validate_imap_user("user\r\nLOGIN evil").is_err());
+    }
+
+    #[test]
+    fn youtube_and_cache_stems_reject_path_tricks() {
+        assert!(validate_youtube_channel_id("UCuAXFkgsw1L7xaCfnd5JJOw").is_ok());
+        assert!(validate_youtube_channel_id("UC../etc").is_err());
+        assert!(validate_youtube_channel_id("https://evil.example").is_err());
+        assert_eq!(
+            validate_cache_file_stem("blink-12345").unwrap(),
+            "blink-12345"
+        );
+        assert!(validate_cache_file_stem("blink-../etc/passwd").is_err());
+        assert!(validate_cache_file_stem("blink-foo/bar").is_err());
+        assert!(is_safe_dns_label("prod"));
+        assert!(is_safe_dns_label("u004"));
+        assert!(!is_safe_dns_label("prod.evil.com"));
+        assert!(!is_safe_dns_label("-bad"));
+        assert!(validate_mailapp_account_name("Gmail").is_ok());
+        assert!(validate_mailapp_account_name("Gmail\nmalicious").is_err());
+        assert!(validate_mailapp_account_name("Gmail\"evil").is_err());
+        assert!(validate_weather_query("Austin").is_ok());
+        assert!(validate_weather_query("x").is_err());
+        assert!(validate_weather_query(&"a".repeat(101)).is_err());
+        assert!(validate_lat_lon(30.27, -97.74).is_ok());
+        assert!(validate_lat_lon(91.0, 0.0).is_err());
+        assert!(validate_lat_lon(0.0, 181.0).is_err());
+        assert!(validate_stored_http_url("https://example.com/story").is_ok());
+        assert!(validate_stored_http_url("javascript:alert(1)").is_err());
+        assert!(validate_stored_http_url("file:///etc/passwd").is_err());
+        assert!(
+            validate_youtube_watch_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ").is_ok()
+        );
+        assert!(validate_youtube_watch_url("https://evil.example/watch?v=x").is_err());
+        assert!(validate_oauth_client_id("1234567890-abc.apps.googleusercontent.com").is_ok());
+        assert!(validate_oauth_client_id("http://evil").is_err());
+        assert!(validate_imessage_ref("+15551212").is_ok());
+        assert!(validate_imessage_ref("iMessage;-;ada@example.com").is_ok());
+        assert!(validate_imessage_ref("../Library/LaunchAgents").is_err());
+    }
+
+    #[test]
+    fn cargo_lock_excludes_aug2026_crates_io_poison() {
+        // https://blog.rust-lang.org/2026/08/20/supply-chain-attack-on-arrayref/
+        let lock = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.lock"));
+        for (name, ver) in [
+            ("arrayref", "0.3.10"),
+            ("internment", "0.8.7"),
+            ("append-only-vec", "0.1.9"),
+        ] {
+            let stanza = format!("name = \"{name}\"\nversion = \"{ver}\"");
+            assert!(
+                !lock.contains(&stanza),
+                "Cargo.lock must not include poisoned crate {name}@{ver}"
+            );
+        }
+        for dropper in [
+            "proc-macro1",
+            "proc-macro-en",
+            "aovine",
+            "arone",
+            "aronenao",
+            "tinymember",
+        ] {
+            let needle = format!("name = \"{dropper}\"");
+            assert!(
+                !lock.contains(&needle),
+                "Cargo.lock must not include dropper crate {dropper}"
+            );
+        }
     }
 }
