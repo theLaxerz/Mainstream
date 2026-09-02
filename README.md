@@ -97,7 +97,9 @@ SQLite lives in the app data directory as `app.db` (created on first launch).
 
 ## Later
 
-- Reminders / Tasks module
-- In-app Messages reply
+See [WHATS_NEXT.md](WHATS_NEXT.md) for the live queue (looks, functionality, coolness). Headline: land the open Tasks PR, then first-run onboarding + starter layout, self-hosted fonts, overlay window chrome, YouTube thumbs.
+
+- Reminders / Tasks module (open as PR #15 — do not rebuild)
 - First-run onboarding
+- In-app Messages reply
 - Signing, notarization, and auto-update
