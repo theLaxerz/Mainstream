@@ -1,7 +1,8 @@
 use crate::commands::open::open_with_system;
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
 use crate::security::{
-    validate_imap_host, validate_imap_mailbox, validate_imap_port, validate_imap_user,
+    validate_imap_host, validate_imap_mailbox, validate_imap_password, validate_imap_port,
+    validate_imap_user,
 };
 use imap::types::Fetch;
 use keyring::Entry;
@@ -824,11 +825,12 @@ pub fn save_email_settings(
     if let Some(password) = input.password.as_deref() {
         let password = password.trim();
         if !password.is_empty() {
+            let password = validate_imap_password(password)?;
             // If username changed, drop the old Keychain item.
             if !previous_user.is_empty() && previous_user != user {
                 let _ = delete_password(&previous_user);
             }
-            store_password(&user, password)?;
+            store_password(&user, &password)?;
         }
     }
 

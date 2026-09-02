@@ -12,7 +12,7 @@ use crate::commands::email::{
 };
 use crate::commands::open::open_with_system;
 use crate::db::{get_setting, set_setting, DbError, DbState};
-use crate::security::validate_oauth_client_id;
+use crate::security::{public_http_client, validate_oauth_client_id, validate_oauth_token};
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use imap::Authenticator;
@@ -186,10 +186,7 @@ pub fn email_from_id_token(id_token: &str) -> Option<String> {
 }
 
 fn http_client() -> Result<reqwest::blocking::Client, DbError> {
-    reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|e| DbError::Message(format!("http client: {e}")))
+    public_http_client(20, Some("MainstreamLifeOS/0.1 (+local; OAuth)"))
 }
 
 fn wait_for_callback(listener: &TcpListener, expected_state: &str) -> Result<String, DbError> {
@@ -464,17 +461,18 @@ pub fn ensure_access_token(conn: &Connection, provider: &str) -> Result<String, 
         ))
     })?;
     if tokens.expires_at > now_unix() && !tokens.access_token.is_empty() {
-        return Ok(tokens.access_token);
+        return validate_oauth_token(&tokens.access_token);
     }
     let refresh = tokens.refresh_token.clone().ok_or_else(|| {
         DbError::Message(format!(
             "{provider} session expired. Continue with {provider} in Email settings."
         ))
     })?;
+    let refresh = validate_oauth_token(&refresh)?;
     let client_id = resolve_client_id(conn, provider, None)?;
     tokens = refresh_tokens(provider, &client_id, &refresh)?;
     store_tokens(provider, &tokens)?;
-    Ok(tokens.access_token)
+    validate_oauth_token(&tokens.access_token)
 }
 
 fn normalize_provider(raw: &str) -> Result<&'static str, DbError> {

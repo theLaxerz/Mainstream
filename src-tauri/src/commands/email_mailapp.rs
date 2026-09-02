@@ -453,11 +453,15 @@ pub fn fetch_informed_candidates(account: &str, limit: usize) -> Result<Vec<Mail
 
 pub fn fetch_source(account: &str, id: i64, dest: &Path) -> Result<Vec<u8>, DbError> {
     let account = validate_mailapp_account_name(account)?;
+    let dest_s = dest.to_string_lossy();
+    if dest_s.contains(['\n', '\r', '\0', '"']) || dest_s.contains("..") {
+        return Err(DbError::Message("Mail.app source path is invalid".into()));
+    }
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
     run_osascript_timed(
-        &source_script(&account, id, &dest.to_string_lossy()),
+        &source_script(&account, id, dest_s.as_ref()),
         MAIL_SYNC_TIMEOUT,
     )?;
     Ok(std::fs::read(dest)?)
