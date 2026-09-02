@@ -295,10 +295,37 @@ pub fn validate_imap_user(raw: &str) -> Result<String, DbError> {
     if user.is_empty() || user.len() > 320 {
         return Err(deny("IMAP username is invalid"));
     }
-    if user.contains(['\n', '\r', '\0', '\t', '"']) {
+    // Also reject SASL separator `\x01` used in XOAUTH2 `user=…\x01auth=Bearer…`.
+    if user.contains(['\n', '\r', '\0', '\t', '"', '\u{0001}']) {
         return Err(deny("IMAP username contains invalid characters"));
     }
     Ok(user.to_string())
+}
+
+/// IMAP LOGIN password. Same class of bug as RUSTSEC-2026-0271 (FTP CRLF): a
+/// password containing CR/LF terminates the LOGIN line and smuggles a second
+/// IMAP command on the authenticated connection.
+pub fn validate_imap_password(raw: &str) -> Result<String, DbError> {
+    let password = raw.trim();
+    if password.is_empty() || password.len() > 512 {
+        return Err(deny("IMAP password is invalid"));
+    }
+    if password.contains(['\n', '\r', '\0']) {
+        return Err(deny("IMAP password contains invalid characters"));
+    }
+    Ok(password.to_string())
+}
+
+/// OAuth access/refresh tokens interpolated into XOAUTH2 or HTTP bodies.
+pub fn validate_oauth_token(raw: &str) -> Result<String, DbError> {
+    let token = raw.trim();
+    if token.is_empty() || token.len() > 8192 {
+        return Err(deny("OAuth token is invalid"));
+    }
+    if token.contains(['\n', '\r', '\0', '\u{0001}']) {
+        return Err(deny("OAuth token contains invalid characters"));
+    }
+    Ok(token.to_string())
 }
 
 /// YouTube channel IDs / handles after URL stripping.
@@ -586,6 +613,12 @@ mod tests {
         assert!(validate_imap_mailbox("folder\"name").is_err());
         assert!(validate_imap_user("ada@gmail.com").is_ok());
         assert!(validate_imap_user("user\r\nLOGIN evil").is_err());
+        assert!(validate_imap_user("user\u{0001}auth=Bearer stolen").is_err());
+        assert!(validate_imap_password("app-password-ok").is_ok());
+        assert!(validate_imap_password("secret\r\nCREATE pwned").is_err());
+        assert!(validate_oauth_token("ya29.a0AfH6S").is_ok());
+        assert!(validate_oauth_token("tok\nsmuggle").is_err());
+        assert!(validate_oauth_token("tok\u{0001}extra").is_err());
     }
 
     #[test]
