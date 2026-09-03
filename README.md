@@ -97,7 +97,8 @@ SQLite lives in the app data directory as `app.db` (created on first launch).
 
 ## Later
 
-- Reminders / Tasks module
+The live product queue is [WHATS_NEXT.md](./WHATS_NEXT.md) (scanned 3 Sep 2026). Headline: land Tasks ([#15](https://github.com/theLaxerz/Mainstream/pull/15)), then first-run onboarding + starter layout, then self-hosted fonts.
+
+- Reminders / Tasks — implemented in #15; merge it, don’t rebuild
 - In-app Messages reply
-- First-run onboarding
 - Signing, notarization, and auto-update
