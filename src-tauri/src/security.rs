@@ -484,8 +484,7 @@ pub fn is_safe_dns_label(raw: &str) -> bool {
     (1..=63).contains(&s.len())
         && !s.starts_with('-')
         && !s.ends_with('-')
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
 pub fn validate_dns_label(raw: &str, what: &str) -> Result<String, DbError> {
@@ -785,9 +784,7 @@ mod tests {
         assert!(validate_stored_http_url("https://example.com/story").is_ok());
         assert!(validate_stored_http_url("javascript:alert(1)").is_err());
         assert!(validate_stored_http_url("file:///etc/passwd").is_err());
-        assert!(
-            validate_youtube_watch_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ").is_ok()
-        );
+        assert!(validate_youtube_watch_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ").is_ok());
         assert!(validate_youtube_watch_url("https://evil.example/watch?v=x").is_err());
         assert!(validate_oauth_client_id("1234567890-abc.apps.googleusercontent.com").is_ok());
         assert!(validate_oauth_client_id("http://evil").is_err());

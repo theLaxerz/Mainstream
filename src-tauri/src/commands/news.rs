@@ -325,9 +325,8 @@ fn fetch_feed(
     feed_url: &str,
 ) -> Result<Vec<ParsedEntry>, DbError> {
     let feed_url = validate_feed_url(feed_url)?;
-    let parsed = url::Url::parse(&feed_url).map_err(|_| {
-        crate::security::deny("invalid feed URL")
-    })?;
+    let parsed =
+        url::Url::parse(&feed_url).map_err(|_| crate::security::deny("invalid feed URL"))?;
     ensure_public_resolved_host(&parsed)?;
     let bytes = client
         .get(&feed_url)

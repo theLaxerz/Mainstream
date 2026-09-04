@@ -8,9 +8,8 @@
 use crate::commands::home::HomeDevice;
 use crate::db::{get_setting, set_setting, DbError, DbState};
 use crate::security::{
-    parse_public_https_url, path_is_within, public_http_client, validate_cache_file_stem,
-    ensure_public_resolved_host,
-    validate_dns_label,
+    ensure_public_resolved_host, parse_public_https_url, path_is_within, public_http_client,
+    validate_cache_file_stem, validate_dns_label,
 };
 use base64::Engine;
 use keyring::Entry;

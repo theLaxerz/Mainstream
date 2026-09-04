@@ -572,15 +572,9 @@ fn sync_informed_delivery_mailapp(
             Ok(bytes) => bytes,
             Err(_) => continue,
         };
-        if let Some((n, ocr)) = ingest_digest(
-            conn,
-            &mailbox,
-            msg.id,
-            &raw,
-            user_email,
-            &known,
-            &cache_dir,
-        )? {
+        if let Some((n, ocr)) =
+            ingest_digest(conn, &mailbox, msg.id, &raw, user_email, &known, &cache_dir)?
+        {
             digests += 1;
             pieces_total += n;
             ocr_ran += ocr;
