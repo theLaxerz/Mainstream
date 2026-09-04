@@ -6,7 +6,8 @@ use crate::commands::email::{
 };
 use crate::db::{now_iso, DbError, DbState};
 use crate::security::{
-    max_http_response_bytes, parse_public_https_url, path_is_within, public_http_client,
+    ensure_public_resolved_host, max_http_response_bytes, parse_public_https_url, path_is_within,
+    public_http_client,
 };
 use mailparse::MailHeaderMap;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -240,7 +241,10 @@ fn ocr_script_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/ocr_image.swift")
 }
 
-fn run_vision_ocr(image_path: &Path) -> Option<String> {
+fn run_vision_ocr(image_path: &Path, cache_dir: &Path) -> Option<String> {
+    if !path_is_within(cache_dir, image_path) {
+        return None;
+    }
     let script = ocr_script_path();
     if !script.exists() {
         return None;
@@ -329,6 +333,7 @@ struct ParsedPiece {
 
 fn fetch_url_bytes(url: &str) -> Option<Vec<u8>> {
     let url = parse_public_https_url(url).ok()?;
+    ensure_public_resolved_host(&url).ok()?;
     let client = public_http_client(12, None).ok()?;
     let resp = client.get(url).send().ok()?;
     if !resp.status().is_success() {
@@ -376,7 +381,7 @@ fn extract_pieces_from_digest(
         let vision_text = if let Some(ref b) = bytes {
             if let Ok(path) = write_image_cache(cache_dir, email_id, idx, b) {
                 image_path = Some(path.clone());
-                run_vision_ocr(&path)
+                run_vision_ocr(&path, cache_dir)
             } else {
                 None
             }
@@ -403,7 +408,7 @@ fn extract_pieces_from_digest(
     for (i, bytes) in orphan_images.into_iter().enumerate() {
         let idx = pieces.len() + i;
         if let Ok(path) = write_image_cache(cache_dir, email_id, idx, &bytes) {
-            let vision_text = run_vision_ocr(&path);
+            let vision_text = run_vision_ocr(&path, cache_dir);
             let had_vision = vision_text.as_ref().is_some_and(|t| !t.trim().is_empty());
             let ocr_text = merge_ocr("", vision_text.as_deref());
             if ocr_text.is_empty() {

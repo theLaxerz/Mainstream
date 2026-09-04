@@ -5,7 +5,7 @@
 //! clients, and the filesystem.
 
 use crate::db::DbError;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 use std::path::{Component, Path};
 use url::Url;
 
@@ -104,7 +104,140 @@ fn host_is_blocked(host: &str) -> bool {
     if let Ok(ip) = host.parse::<IpAddr>() {
         return is_non_public_ip(ip);
     }
+    // Browsers and some HTTP stacks accept decimal/hex/short IPv4 that the
+    // `url` crate leaves as a domain (`2130706433` → 127.0.0.1). Same class
+    // as the Sep 2026 link-preview-js DNS-rebinding SSRF bypass (CVE-2026-61704).
+    if let Some(v4) = parse_obscured_ipv4(&host) {
+        return is_non_public_ipv4(v4);
+    }
     false
+}
+
+/// Parse IPv4 forms that `Ipv4Addr::from_str` rejects: a 32-bit dword,
+/// `0x…` hex, octal octets, and 1–3 dotted parts (`127.1` → 127.0.0.1).
+fn parse_obscured_ipv4(host: &str) -> Option<Ipv4Addr> {
+    let host = host.trim().trim_end_matches('.');
+    if host.is_empty() || host.len() > 21 {
+        return None;
+    }
+    if let Some(hex) = host.strip_prefix("0x") {
+        if hex.is_empty() || hex.len() > 8 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        return u32::from_str_radix(hex, 16).ok().map(Ipv4Addr::from);
+    }
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.is_empty() || parts.len() > 4 {
+        return None;
+    }
+    fn part_value(part: &str) -> Option<u32> {
+        if part.is_empty() || part.len() > 11 {
+            return None;
+        }
+        if part.len() > 1
+            && part.starts_with('0')
+            && part.bytes().all(|b| (b'0'..=b'7').contains(&b))
+        {
+            return u32::from_str_radix(part, 8).ok();
+        }
+        if part.bytes().all(|b| b.is_ascii_digit()) {
+            return part.parse().ok();
+        }
+        None
+    }
+    let nums: Vec<u32> = parts.into_iter().map(part_value).collect::<Option<_>>()?;
+    match nums.as_slice() {
+        [a] => Some(Ipv4Addr::from(*a)),
+        [a, b] if *a <= 0xff && *b <= 0x00ff_ffff => Some(Ipv4Addr::new(
+            *a as u8,
+            ((b >> 16) & 0xff) as u8,
+            ((b >> 8) & 0xff) as u8,
+            (b & 0xff) as u8,
+        )),
+        [a, b, c] if *a <= 0xff && *b <= 0xff && *c <= 0xffff => Some(Ipv4Addr::new(
+            *a as u8,
+            *b as u8,
+            ((c >> 8) & 0xff) as u8,
+            (c & 0xff) as u8,
+        )),
+        [a, b, c, d] if nums.iter().all(|n| *n <= 0xff) => {
+            Some(Ipv4Addr::new(*a as u8, *b as u8, *c as u8, *d as u8))
+        }
+        _ => None,
+    }
+}
+
+/// Resolve `url`'s host and reject if any address is non-public.
+/// Call this immediately before an HTTP fetch of an untrusted URL (RSS, email
+/// images). Hostname allowlisting alone is not enough: a public-looking name
+/// can rebind to loopback or link-local between parse and connect.
+pub fn ensure_public_resolved_host(url: &Url) -> Result<(), DbError> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| deny("URL is missing a host"))?;
+    if host_is_blocked(host) {
+        return Err(deny("URL host is not allowed"));
+    }
+    if host.parse::<IpAddr>().is_ok() || parse_obscured_ipv4(host).is_some() {
+        return Ok(());
+    }
+    let port = url.port_or_known_default().unwrap_or(443);
+    let addrs = (host, port)
+        .to_socket_addrs()
+        .map_err(|_| deny("URL host could not be resolved"))?;
+    let mut saw = false;
+    for addr in addrs {
+        saw = true;
+        if is_non_public_ip(addr.ip()) {
+            return Err(deny("URL host resolved to a private address"));
+        }
+    }
+    if !saw {
+        return Err(deny("URL host could not be resolved"));
+    }
+    Ok(())
+}
+
+/// IMAP connect-time check: a hostname that looks public can still resolve to
+/// loopback / link-local / metadata. RFC1918 stays allowed for LAN mail servers.
+pub fn ensure_imap_host_resolves_safely(host: &str) -> Result<(), DbError> {
+    if host.parse::<IpAddr>().is_ok() || parse_obscured_ipv4(host).is_some() {
+        return Ok(());
+    }
+    let addrs = (host, 993u16)
+        .to_socket_addrs()
+        .map_err(|_| deny("IMAP host could not be resolved"))?;
+    let mut saw = false;
+    for addr in addrs {
+        saw = true;
+        if imap_resolved_ip_is_blocked(addr.ip()) {
+            return Err(deny("IMAP host resolved to a blocked address"));
+        }
+    }
+    if !saw {
+        return Err(deny("IMAP host could not be resolved"));
+    }
+    Ok(())
+}
+
+fn imap_resolved_ip_is_blocked(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback() || v4.is_link_local() || v4.is_unspecified() || v4.is_multicast()
+        }
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return v4.is_loopback()
+                    || v4.is_link_local()
+                    || v4.is_unspecified()
+                    || v4.is_multicast();
+            }
+            v6.is_loopback()
+                || v6.is_multicast()
+                || v6.is_unspecified()
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+        }
+    }
 }
 
 fn ensure_no_userinfo(url: &Url) -> Result<(), DbError> {
@@ -246,23 +379,10 @@ fn imap_host_is_blocked(host: &str) -> bool {
         return true;
     }
     if let Ok(ip) = host.parse::<IpAddr>() {
-        return match ip {
-            IpAddr::V4(v4) => {
-                v4.is_loopback() || v4.is_link_local() || v4.is_unspecified() || v4.is_multicast()
-            }
-            IpAddr::V6(v6) => {
-                if let Some(v4) = v6.to_ipv4_mapped() {
-                    return v4.is_loopback()
-                        || v4.is_link_local()
-                        || v4.is_unspecified()
-                        || v4.is_multicast();
-                }
-                v6.is_loopback()
-                    || v6.is_multicast()
-                    || v6.is_unspecified()
-                    || (v6.segments()[0] & 0xffc0) == 0xfe80
-            }
-        };
+        return imap_resolved_ip_is_blocked(ip);
+    }
+    if let Some(v4) = parse_obscured_ipv4(&host) {
+        return imap_resolved_ip_is_blocked(IpAddr::V4(v4));
     }
     false
 }
@@ -531,6 +651,9 @@ pub fn blocked_http_client_redirect(previous: usize, next: &Url) -> Result<(), &
     if parse_public_http_url(next.as_str()).is_err() {
         return Err("blocked redirect target");
     }
+    if ensure_public_resolved_host(next).is_err() {
+        return Err("blocked redirect target");
+    }
     Ok(())
 }
 
@@ -573,6 +696,18 @@ mod tests {
         assert!(validate_feed_url("http://192.168.1.1/feed").is_err());
         assert!(validate_feed_url("file:///etc/passwd").is_err());
         assert!(validate_feed_url("https://user:pass@example.com/feed").is_err());
+        // Obscured IPv4 that the URL crate leaves as a domain name.
+        assert!(validate_feed_url("http://2130706433/").is_err());
+        assert!(validate_feed_url("http://127.1/").is_err());
+        assert!(validate_feed_url("http://0x7f000001/").is_err());
+        assert!(validate_feed_url("http://0177.0.0.1/").is_err());
+        assert!(parse_obscured_ipv4("8.8.8.8").is_some());
+        assert!(!is_non_public_ipv4(parse_obscured_ipv4("8.8.8.8").unwrap()));
+        assert!(is_non_public_ipv4(parse_obscured_ipv4("127.1").unwrap()));
+        let loopback = Url::parse("http://127.0.0.1/secret").unwrap();
+        assert!(ensure_public_resolved_host(&loopback).is_err());
+        let metadata = Url::parse("http://169.254.169.254/").unwrap();
+        assert!(ensure_public_resolved_host(&metadata).is_err());
     }
 
     #[test]
@@ -600,6 +735,8 @@ mod tests {
         assert!(validate_imap_host("169.254.169.254").is_err());
         assert!(validate_imap_host("::1").is_err());
         assert!(validate_imap_host("metadata.google.internal").is_err());
+        assert!(validate_imap_host("2130706433").is_err());
+        assert!(validate_imap_host("127.1").is_err());
     }
 
     #[test]

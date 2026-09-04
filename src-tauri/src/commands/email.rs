@@ -1,8 +1,8 @@
 use crate::commands::open::open_with_system;
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
 use crate::security::{
-    validate_imap_host, validate_imap_mailbox, validate_imap_password, validate_imap_port,
-    validate_imap_user,
+    ensure_imap_host_resolves_safely, validate_imap_host, validate_imap_mailbox,
+    validate_imap_password, validate_imap_port, validate_imap_user,
 };
 use imap::types::Fetch;
 use keyring::Entry;
@@ -633,6 +633,7 @@ pub(crate) fn open_imap_session(conn: &Connection) -> Result<(ImapSession, Email
     }
 
     let host = validate_imap_host(&settings.host)?;
+    ensure_imap_host_resolves_safely(&host)?;
     let user = validate_imap_user(&settings.user)?;
     let mailbox = if settings.mailbox.trim().is_empty() {
         "INBOX".to_string()
@@ -672,6 +673,7 @@ pub(crate) fn open_imap_session(conn: &Connection) -> Result<(ImapSession, Email
                 "IMAP password missing from Keychain — save it in Email settings.".into(),
             )
         })?;
+        let password = validate_imap_password(&password)?;
         client
             .login(&user, &password)
             .map_err(|e| DbError::Message(format!("IMAP login failed: {}", e.0)))?

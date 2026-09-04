@@ -1,6 +1,8 @@
 use crate::commands::open::open_with_system;
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
-use crate::security::{public_http_client, validate_feed_url, validate_stored_http_url};
+use crate::security::{
+    ensure_public_resolved_host, public_http_client, validate_feed_url, validate_stored_http_url,
+};
 use chrono::{DateTime, Utc};
 use feed_rs::parser;
 use rusqlite::{params, Connection};
@@ -323,6 +325,10 @@ fn fetch_feed(
     feed_url: &str,
 ) -> Result<Vec<ParsedEntry>, DbError> {
     let feed_url = validate_feed_url(feed_url)?;
+    let parsed = url::Url::parse(&feed_url).map_err(|_| {
+        crate::security::deny("invalid feed URL")
+    })?;
+    ensure_public_resolved_host(&parsed)?;
     let bytes = client
         .get(&feed_url)
         .send()
