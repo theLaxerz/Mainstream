@@ -1,4 +1,7 @@
 use crate::db::{now_iso, DbError, DbState};
+use crate::security::{
+    validate_currency_code, validate_finance_description, validate_finance_label,
+};
 use chrono::{NaiveDate, Utc};
 use csv::ReaderBuilder;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -283,6 +286,7 @@ fn ensure_category(conn: &Connection, name: &str) -> Result<Option<i64>, DbError
     if name.is_empty() {
         return Ok(None);
     }
+    let name = validate_finance_label(name, "category", 80)?;
     if let Some(id) = conn
         .query_row(
             "SELECT id FROM categories WHERE name = ?1 COLLATE NOCASE",
@@ -445,7 +449,12 @@ fn parse_csv_rows(
     }
 
     let format = format_hint
-        .filter(|f| !f.is_empty() && *f != "auto")
+        .filter(|f| {
+            matches!(
+                *f,
+                "apple_card" | "chase" | "bofa" | "capital_one" | "citi" | "discover" | "generic"
+            )
+        })
         .unwrap_or_else(|| detect_csv_format(&headers))
         .to_string();
 
@@ -453,6 +462,11 @@ fn parse_csv_rows(
     let mut pending = Vec::new();
 
     for (row_i, result) in reader.records().enumerate() {
+        if pending.len() >= 10_000 {
+            return Err(DbError::Message(
+                "CSV has too many rows to import (max 10000)".into(),
+            ));
+        }
         let record = result.map_err(|e| DbError::Message(format!("csv row {}: {e}", row_i + 2)))?;
         if record.iter().all(|c| c.trim().is_empty()) {
             continue;
@@ -595,11 +609,7 @@ fn parse_capital_one_row(
     record: &csv::StringRecord,
     idx: &HashMap<String, usize>,
 ) -> Result<Option<PendingTxn>, DbError> {
-    let date = cell(
-        record,
-        idx,
-        &["transaction date", "posted date", "date"],
-    );
+    let date = cell(record, idx, &["transaction date", "posted date", "date"]);
     let desc = cell(record, idx, &["description", "merchant"]);
     let category = cell(record, idx, &["category"]);
     let debit = cell(record, idx, &["debit"]);
@@ -657,7 +667,13 @@ fn parse_discover_row(
     let date = cell(
         record,
         idx,
-        &["trans. date", "trans date", "transaction date", "post date", "date"],
+        &[
+            "trans. date",
+            "trans date",
+            "transaction date",
+            "post date",
+            "date",
+        ],
     );
     let desc = cell(record, idx, &["description"]);
     let category = cell(record, idx, &["category"]);
@@ -754,18 +770,18 @@ pub fn create_account(
     input: CreateAccountInput,
 ) -> Result<Account, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
-    let name = input.name.trim();
-    if name.is_empty() {
-        return Err(DbError::Message("name is required".into()));
-    }
+    let name = validate_finance_label(&input.name, "account name", 80)?;
     let kind = input.kind.trim().to_ascii_lowercase();
     validate_account_kind(&kind)?;
-    let currency = input
+    let currency = match input
         .currency
         .as_deref()
         .map(str::trim)
         .filter(|c| !c.is_empty())
-        .unwrap_or("USD");
+    {
+        Some(code) => validate_currency_code(code)?,
+        None => "USD".into(),
+    };
     let now = now_iso();
     db.conn().execute(
         "INSERT INTO accounts (name, kind, currency, created_at) VALUES (?1, ?2, ?3, ?4)",
@@ -790,21 +806,19 @@ pub fn update_account(
     let existing = get_account(db.conn(), input.id)?
         .ok_or_else(|| DbError::Message(format!("account {} not found", input.id)))?;
 
-    let name = input
-        .name
-        .map(|n| n.trim().to_string())
-        .filter(|n| !n.is_empty())
-        .unwrap_or(existing.name);
+    let name = match input.name {
+        Some(n) => validate_finance_label(&n, "account name", 80)?,
+        None => existing.name,
+    };
     let kind = input
         .kind
         .map(|k| k.trim().to_ascii_lowercase())
         .unwrap_or(existing.kind);
     validate_account_kind(&kind)?;
-    let currency = input
-        .currency
-        .map(|c| c.trim().to_string())
-        .filter(|c| !c.is_empty())
-        .unwrap_or(existing.currency);
+    let currency = match input.currency {
+        Some(c) => validate_currency_code(&c)?,
+        None => existing.currency,
+    };
 
     db.conn().execute(
         "UPDATE accounts SET name = ?1, kind = ?2, currency = ?3 WHERE id = ?4",
@@ -857,7 +871,7 @@ pub fn list_transactions(
     account_id: Option<i64>,
 ) -> Result<Vec<TransactionView>, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
-    list_recent_transactions(db.conn(), limit.unwrap_or(100), account_id)
+    list_recent_transactions(db.conn(), limit.unwrap_or(100).clamp(1, 500), account_id)
 }
 
 #[tauri::command]
@@ -880,10 +894,17 @@ pub fn create_transaction(
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .unwrap_or_else(|| Utc::now().to_rfc3339());
-    let description = input
-        .description
-        .map(|d| d.trim().to_string())
-        .filter(|d| !d.is_empty());
+    let description = match input.description {
+        Some(d) => {
+            let t = validate_finance_description(&d)?;
+            if t.is_empty() {
+                None
+            } else {
+                Some(t)
+            }
+        }
+        None => None,
+    };
 
     db.conn().execute(
         "INSERT INTO transactions
@@ -928,7 +949,7 @@ pub fn update_transaction(
     let amount = input.amount.unwrap_or(existing.amount);
     let description = match input.description {
         Some(d) => {
-            let t = d.trim().to_string();
+            let t = validate_finance_description(&d)?;
             if t.is_empty() {
                 None
             } else {
@@ -1107,13 +1128,22 @@ pub fn import_transactions_csv(
             continue;
         }
         let category_id = match &txn.category {
-            Some(name) => ensure_category(db.conn(), name)?,
+            Some(name) => match ensure_category(db.conn(), name) {
+                Ok(id) => id,
+                Err(_) => {
+                    skipped += 1;
+                    continue;
+                }
+            },
             None => None,
         };
-        let description = if txn.description.is_empty() {
-            None
-        } else {
-            Some(txn.description)
+        let description = match validate_finance_description(&txn.description) {
+            Ok(d) if d.is_empty() => None,
+            Ok(d) => Some(d),
+            Err(_) => {
+                skipped += 1;
+                continue;
+            }
         };
         db.conn().execute(
             "INSERT INTO transactions

@@ -12,6 +12,7 @@ use crate::commands::email::{
 };
 use crate::commands::open::open_with_system;
 use crate::db::{get_setting, set_setting, DbError, DbState};
+use crate::security::{public_http_client, validate_oauth_client_id, validate_oauth_token};
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use imap::Authenticator;
@@ -31,7 +32,8 @@ const CALLBACK_TIMEOUT: Duration = Duration::from_secs(180);
 const GOOGLE_AUTH: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN: &str = "https://oauth2.googleapis.com/token";
 const GOOGLE_USERINFO: &str = "https://www.googleapis.com/oauth2/v3/userinfo";
-const GOOGLE_SCOPE: &str = "https://mail.google.com/ https://www.googleapis.com/auth/userinfo.email openid";
+const GOOGLE_SCOPE: &str =
+    "https://mail.google.com/ https://www.googleapis.com/auth/userinfo.email openid";
 const MICROSOFT_AUTH: &str = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize";
 const MICROSOFT_TOKEN: &str = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
 const MICROSOFT_SCOPE: &str =
@@ -185,10 +187,7 @@ pub fn email_from_id_token(id_token: &str) -> Option<String> {
 }
 
 fn http_client() -> Result<reqwest::blocking::Client, DbError> {
-    reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|e| DbError::Message(format!("http client: {e}")))
+    public_http_client(20, Some("MainstreamLifeOS/0.1 (+local; OAuth)"))
 }
 
 fn wait_for_callback(listener: &TcpListener, expected_state: &str) -> Result<String, DbError> {
@@ -204,7 +203,8 @@ fn wait_for_callback(listener: &TcpListener, expected_state: &str) -> Result<Str
                 let request = String::from_utf8_lossy(&buf[..n]);
                 let params = parse_http_callback(&request).unwrap_or_default();
                 if params.is_empty() {
-                    let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
+                    let _ =
+                        stream.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
                     continue;
                 }
                 let body = if params.get("state").map(String::as_str) == Some(expected_state)
@@ -276,23 +276,31 @@ p{{margin:0;color:#3d5a63;line-height:1.45}}
     )
 }
 
-fn resolve_client_id(conn: &Connection, provider: &str, override_id: Option<&str>) -> Result<String, DbError> {
+fn resolve_client_id(
+    conn: &Connection,
+    provider: &str,
+    override_id: Option<&str>,
+) -> Result<String, DbError> {
     if let Some(id) = override_id.map(str::trim).filter(|s| !s.is_empty()) {
+        let id = validate_oauth_client_id(id)?;
         let key = if provider == "google" {
             SETTING_GOOGLE_CLIENT_ID
         } else {
             SETTING_MICROSOFT_CLIENT_ID
         };
-        set_setting(conn, key, id)?;
-        return Ok(id.to_string());
+        set_setting(conn, key, &id)?;
+        return Ok(id);
     }
     let key = if provider == "google" {
         SETTING_GOOGLE_CLIENT_ID
     } else {
         SETTING_MICROSOFT_CLIENT_ID
     };
-    if let Some(id) = get_setting(conn, key)?.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
-        return Ok(id);
+    if let Some(id) = get_setting(conn, key)?
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
+        return validate_oauth_client_id(&id);
     }
     let env_key = if provider == "google" {
         "MAINSTREAM_GOOGLE_CLIENT_ID"
@@ -302,6 +310,7 @@ fn resolve_client_id(conn: &Connection, provider: &str, override_id: Option<&str
     if let Ok(id) = std::env::var(env_key) {
         let id = id.trim().to_string();
         if !id.is_empty() {
+            let id = validate_oauth_client_id(&id)?;
             set_setting(conn, key, &id)?;
             return Ok(id);
         }
@@ -331,11 +340,7 @@ fn authorize_url(
             "&access_type=offline&prompt=select_account%20consent",
         )
     } else {
-        (
-            MICROSOFT_AUTH,
-            MICROSOFT_SCOPE,
-            "&prompt=select_account",
-        )
+        (MICROSOFT_AUTH, MICROSOFT_SCOPE, "&prompt=select_account")
     };
     format!(
         "{auth}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}&code_challenge={}&code_challenge_method=S256{extra}",
@@ -388,7 +393,9 @@ fn exchange_tokens(
         .map_err(|e| DbError::Message(format!("token response: {e}")))?;
     if let Some(err) = resp.error {
         let desc = resp.error_description.unwrap_or_default();
-        return Err(DbError::Message(format!("OAuth token error: {err} {desc}").trim().into()));
+        return Err(DbError::Message(
+            format!("OAuth token error: {err} {desc}").trim().into(),
+        ));
     }
     let access = resp
         .access_token
@@ -401,7 +408,11 @@ fn exchange_tokens(
     Ok((tokens, resp.id_token))
 }
 
-fn refresh_tokens(provider: &str, client_id: &str, refresh_token: &str) -> Result<OAuthTokens, DbError> {
+fn refresh_tokens(
+    provider: &str,
+    client_id: &str,
+    refresh_token: &str,
+) -> Result<OAuthTokens, DbError> {
     let endpoint = if provider == "google" {
         GOOGLE_TOKEN
     } else {
@@ -425,7 +436,9 @@ fn refresh_tokens(provider: &str, client_id: &str, refresh_token: &str) -> Resul
     if let Some(err) = resp.error {
         let desc = resp.error_description.unwrap_or_default();
         return Err(DbError::Message(
-            format!("Reconnect {provider} in Email settings ({err} {desc})").trim().into(),
+            format!("Reconnect {provider} in Email settings ({err} {desc})")
+                .trim()
+                .into(),
         ));
     }
     let access = resp
@@ -442,7 +455,9 @@ fn refresh_tokens(provider: &str, client_id: &str, refresh_token: &str) -> Resul
 }
 
 fn lookup_google_email(access_token: &str) -> Option<String> {
-    let resp = http_client().ok()?.get(GOOGLE_USERINFO)
+    let resp = http_client()
+        .ok()?
+        .get(GOOGLE_USERINFO)
         .bearer_auth(access_token)
         .send()
         .ok()?;
@@ -461,17 +476,18 @@ pub fn ensure_access_token(conn: &Connection, provider: &str) -> Result<String, 
         ))
     })?;
     if tokens.expires_at > now_unix() && !tokens.access_token.is_empty() {
-        return Ok(tokens.access_token);
+        return validate_oauth_token(&tokens.access_token);
     }
     let refresh = tokens.refresh_token.clone().ok_or_else(|| {
         DbError::Message(format!(
             "{provider} session expired. Continue with {provider} in Email settings."
         ))
     })?;
+    let refresh = validate_oauth_token(&refresh)?;
     let client_id = resolve_client_id(conn, provider, None)?;
     tokens = refresh_tokens(provider, &client_id, &refresh)?;
     store_tokens(provider, &tokens)?;
-    Ok(tokens.access_token)
+    validate_oauth_token(&tokens.access_token)
 }
 
 fn normalize_provider(raw: &str) -> Result<&'static str, DbError> {
@@ -509,9 +525,7 @@ pub fn start_email_oauth(
 
     let code = wait_for_callback(&listener, &state_token)?;
     let (tokens, id_token) = exchange_tokens(provider, &client_id, &redirect, &code, &verifier)?;
-    let mut email = id_token
-        .as_deref()
-        .and_then(email_from_id_token);
+    let mut email = id_token.as_deref().and_then(email_from_id_token);
     if email.is_none() && provider == "google" {
         email = lookup_google_email(&tokens.access_token);
     }
@@ -569,9 +583,8 @@ mod tests {
 
     #[test]
     fn email_from_id_token_reads_payload() {
-        let payload = URL_SAFE_NO_PAD.encode(
-            br#"{"email":"ada@outlook.com","preferred_username":"ada@outlook.com"}"#,
-        );
+        let payload = URL_SAFE_NO_PAD
+            .encode(br#"{"email":"ada@outlook.com","preferred_username":"ada@outlook.com"}"#);
         let token = format!("aaa.{payload}.sig");
         assert_eq!(
             email_from_id_token(&token).as_deref(),

@@ -1,4 +1,5 @@
 use crate::db::{now_iso, DbError, DbState};
+use crate::security::{validate_app_target, validate_open_url};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -36,9 +37,15 @@ pub struct UpdateShortcutInput {
 fn validate_kind(kind: &str) -> Result<&str, DbError> {
     match kind {
         "url" | "app" => Ok(kind),
-        _ => Err(DbError::Message(
-            "kind must be 'url' or 'app'".into(),
-        )),
+        _ => Err(DbError::Message("kind must be 'url' or 'app'".into())),
+    }
+}
+
+fn validate_shortcut_target(kind: &str, target: &str) -> Result<String, DbError> {
+    match kind {
+        "url" => validate_open_url(target),
+        "app" => validate_app_target(target),
+        _ => Err(DbError::Message("kind must be 'url' or 'app'".into())),
     }
 }
 
@@ -77,6 +84,7 @@ pub fn create_shortcut(
         return Err(DbError::Message("label and target are required".into()));
     }
     let kind = validate_kind(input.kind.trim())?.to_string();
+    let target = validate_shortcut_target(&kind, target)?;
     let sort_order = input.sort_order.unwrap_or(0);
     let created_at = now_iso();
 
@@ -90,7 +98,7 @@ pub fn create_shortcut(
         id,
         label: label.to_string(),
         kind,
-        target: target.to_string(),
+        target,
         sort_order,
         created_at,
     })
@@ -120,6 +128,7 @@ pub fn update_shortcut(
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
         .unwrap_or(existing.target);
+    let target = validate_shortcut_target(&kind, &target)?;
     let sort_order = input.sort_order.unwrap_or(existing.sort_order);
 
     db.conn().execute(
@@ -158,10 +167,7 @@ pub fn open_shortcut(state: State<'_, DbState>, id: i64) -> Result<(), DbError> 
     crate::commands::open::open_with_system(&shortcut.kind, &shortcut.target)
 }
 
-fn get_shortcut_inner(
-    conn: &rusqlite::Connection,
-    id: i64,
-) -> Result<Option<Shortcut>, DbError> {
+fn get_shortcut_inner(conn: &rusqlite::Connection, id: i64) -> Result<Option<Shortcut>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT id, label, kind, target, sort_order, created_at FROM shortcuts WHERE id = ?1",
     )?;

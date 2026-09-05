@@ -140,11 +140,16 @@ fn open_export_reader(path: &Path) -> Result<Box<dyn Read>, DbError> {
             let mut file = archive
                 .by_index(i)
                 .map_err(|e| DbError::Message(format!("zip entry: {e}")))?;
-            let name = file.name().to_ascii_lowercase();
-            if name.contains("..") {
+            // `enclosed_name` rejects zip-slip (`../`, absolute paths). We only
+            // read export.xml into memory, but still skip hostile entries.
+            let Some(enclosed) = file.enclosed_name() else {
                 continue;
-            }
-            if name.ends_with("export.xml") || name.ends_with("apple_health_export/export.xml") {
+            };
+            let name = enclosed
+                .to_string_lossy()
+                .replace('\\', "/")
+                .to_ascii_lowercase();
+            if name.ends_with("export.xml") {
                 if file.size() > max_health_export_bytes() {
                     return Err(DbError::Message(
                         "Health export.xml inside zip is too large".into(),
