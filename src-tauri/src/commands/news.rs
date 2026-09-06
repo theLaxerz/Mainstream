@@ -1,7 +1,8 @@
 use crate::commands::open::open_with_system;
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
 use crate::security::{
-    ensure_public_resolved_host, public_http_client, validate_feed_url, validate_stored_http_url,
+    ensure_public_resolved_host, public_http_client, validate_feed_url, validate_open_url,
+    validate_stored_http_url,
 };
 use chrono::{DateTime, Utc};
 use feed_rs::parser;
@@ -247,6 +248,7 @@ pub fn open_news_item(state: State<'_, DbState>, id: i64) -> Result<(), DbError>
         params![id],
         |row| row.get(0),
     )?;
+    let url = validate_open_url(&url)?;
     open_with_system("url", &url)
 }
 

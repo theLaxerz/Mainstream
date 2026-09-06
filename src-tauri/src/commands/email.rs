@@ -2,7 +2,7 @@ use crate::commands::open::open_with_system;
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
 use crate::security::{
     ensure_imap_host_resolves_safely, validate_imap_host, validate_imap_mailbox,
-    validate_imap_password, validate_imap_port, validate_imap_user,
+    validate_imap_password, validate_imap_port, validate_imap_user, validate_open_url,
 };
 use imap::types::Fetch;
 use keyring::Entry;
@@ -598,7 +598,7 @@ const EMAIL_SELECT: &str = "SELECT id, uid, mailbox, message_id, from_addr, from
      FROM emails";
 
 fn list_important(conn: &Connection, limit: Option<i64>) -> Result<Vec<EmailMessage>, DbError> {
-    let limit = limit.unwrap_or(10).max(1);
+    let limit = limit.unwrap_or(10).clamp(1, 200);
     let mut stmt = conn.prepare(&format!(
         "{EMAIL_SELECT}
          WHERE is_unread = 1 AND is_important = 1 AND is_junk = 0
@@ -915,7 +915,9 @@ pub fn open_email(state: State<'_, DbState>, id: i64) -> Result<(), DbError> {
     let provider = get_setting(db.conn(), SETTING_PROVIDER)?.unwrap_or_default();
     drop(db);
 
-    let url = message_url.or_else(|| message_url_for(&message_id));
+    let url = message_url
+        .or_else(|| message_url_for(&message_id))
+        .and_then(|u| validate_open_url(&u).ok());
     if let Some(url) = url {
         // Prefer message:// so Mail.app jumps to the message when it has it indexed.
         match open_with_system("url", &url) {
