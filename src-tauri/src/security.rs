@@ -98,6 +98,16 @@ fn is_non_public_ipv6(ip: Ipv6Addr) -> bool {
     if let Some(v4) = teredo_client_ipv4(ip) {
         return is_non_public_ipv4(v4);
     }
+    // RFC 8215 local-use NAT64 64:ff9b:1::/48 — never a public fetch target.
+    if is_local_use_nat64(ip) {
+        return true;
+    }
+    if let Some(v4) = nat64_embedded_ipv4(ip) {
+        return is_non_public_ipv4(v4);
+    }
+    if let Some(v4) = isatap_embedded_ipv4(ip) {
+        return is_non_public_ipv4(v4);
+    }
     ip.is_loopback()
         || ip.is_multicast()
         || ip.is_unspecified()
@@ -148,6 +158,43 @@ fn teredo_client_ipv4(ip: Ipv6Addr) -> Option<Ipv4Addr> {
     }
 }
 
+/// RFC 6052 well-known NAT64 prefix 64:ff9b::/96 — IPv4 is the last 32 bits.
+/// Same class as GHSA-88jm-rxg9-3v5r / GHSA-pph6-vfjv-vpjw / CVE-2026-48737:
+/// `64:ff9b::a9fe:a9fe` is 169.254.169.254 behind a NAT64 gateway.
+fn nat64_embedded_ipv4(ip: Ipv6Addr) -> Option<Ipv4Addr> {
+    let s = ip.segments();
+    if s[0] == 0x64 && s[1] == 0xff9b && s[2] == 0 && s[3] == 0 && s[4] == 0 && s[5] == 0 {
+        Some(Ipv4Addr::new(
+            (s[6] >> 8) as u8,
+            (s[6] & 0xff) as u8,
+            (s[7] >> 8) as u8,
+            (s[7] & 0xff) as u8,
+        ))
+    } else {
+        None
+    }
+}
+
+fn is_local_use_nat64(ip: Ipv6Addr) -> bool {
+    let s = ip.segments();
+    s[0] == 0x64 && s[1] == 0xff9b && s[2] == 1
+}
+
+/// ISATAP `*::5efe:a.b.c.d` — IPv4 is the last 32 bits.
+fn isatap_embedded_ipv4(ip: Ipv6Addr) -> Option<Ipv4Addr> {
+    let s = ip.segments();
+    if s[5] == 0x5efe {
+        Some(Ipv4Addr::new(
+            (s[6] >> 8) as u8,
+            (s[6] & 0xff) as u8,
+            (s[7] >> 8) as u8,
+            (s[7] & 0xff) as u8,
+        ))
+    } else {
+        None
+    }
+}
+
 fn host_is_blocked(host: &str) -> bool {
     let host = host.trim().trim_matches(|c| c == '[' || c == ']');
     let host = host.trim_end_matches('.').to_ascii_lowercase();
@@ -159,6 +206,7 @@ fn host_is_blocked(host: &str) -> bool {
         || host.ends_with(".internal")
         || host.ends_with(".onion")
         || host == "metadata.google.internal"
+        || host == "instance-data"
     {
         return true;
     }
@@ -435,7 +483,9 @@ fn imap_host_is_blocked(host: &str) -> bool {
         || host == "localhost"
         || host == "localhost.localdomain"
         || host.ends_with(".localhost")
+        || host.ends_with(".onion")
         || host == "metadata.google.internal"
+        || host == "instance-data"
     {
         return true;
     }
@@ -672,6 +722,33 @@ pub fn validate_finance_description(raw: &str) -> Result<String, DbError> {
     Ok(value.to_string())
 }
 
+/// TMDB v3 API key pasted from IPC (query-string `api_key=`).
+pub fn validate_tmdb_api_key(raw: &str) -> Result<String, DbError> {
+    let key = raw.trim();
+    if key.len() < 8 || key.len() > 64 {
+        return Err(deny("TMDB API key is invalid"));
+    }
+    if !key.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(deny("TMDB API key contains invalid characters"));
+    }
+    Ok(key.to_string())
+}
+
+/// TMDB `poster_path` (`/abc.jpg`). Prefixed onto `https://image.tmdb.org/t/p/w342`.
+pub fn validate_tmdb_poster_path(raw: &str) -> Result<String, DbError> {
+    let path = raw.trim();
+    if !path.starts_with('/') || path.len() > 200 || path.contains("..") {
+        return Err(deny("poster path is invalid"));
+    }
+    if !path
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '/' || c == '.' || c == '_' || c == '-')
+    {
+        return Err(deny("poster path contains invalid characters"));
+    }
+    Ok(format!("https://image.tmdb.org/t/p/w342{path}"))
+}
+
 /// ISO 4217-style currency code.
 pub fn validate_currency_code(raw: &str) -> Result<String, DbError> {
     let code = raw.trim().to_ascii_uppercase();
@@ -801,6 +878,15 @@ mod tests {
         assert!(validate_feed_url("http://198.18.0.1/").is_err());
         assert!(validate_feed_url("https://facebookcorewwwi.onion/").is_err());
         assert!(validate_feed_url("http://[2002:ac10:0101::1]/").is_err());
+        // NAT64 well-known prefix wrapping metadata / loopback (hex and dotted).
+        assert!(validate_feed_url("http://[64:ff9b::a9fe:a9fe]/").is_err());
+        assert!(validate_feed_url("http://[64:ff9b::169.254.169.254]/").is_err());
+        assert!(validate_feed_url("http://[64:ff9b::7f00:1]/").is_err());
+        assert!(validate_feed_url("http://[64:ff9b:1::a9fe:a9fe]/").is_err());
+        assert!(validate_feed_url("http://[64:ff9b:1::8.8.8.8]/").is_err());
+        // ISATAP wrapping RFC1918 (global-looking prefix, embedded 10.0.0.1).
+        assert!(validate_feed_url("http://[2001:db8::5efe:a00:1]/").is_err());
+        assert!(validate_feed_url("http://instance-data/").is_err());
         assert!(parse_obscured_ipv4("8.8.8.8").is_some());
         assert!(!is_non_public_ipv4(parse_obscured_ipv4("8.8.8.8").unwrap()));
         assert!(is_non_public_ipv4(parse_obscured_ipv4("127.1").unwrap()));
@@ -837,6 +923,8 @@ mod tests {
         assert!(validate_imap_host("metadata.google.internal").is_err());
         assert!(validate_imap_host("2130706433").is_err());
         assert!(validate_imap_host("127.1").is_err());
+        assert!(validate_imap_host("mail.example.onion").is_err());
+        assert!(validate_imap_host("instance-data").is_err());
     }
 
     #[test]
@@ -903,6 +991,19 @@ mod tests {
         assert!(validate_finance_label(&"x".repeat(81), "account name", 80).is_err());
         assert!(validate_finance_description("Coffee").is_ok());
         assert!(validate_finance_description("line\nbreak").is_err());
+        assert!(validate_tmdb_api_key("a1b2c3d4e5f67890").is_ok());
+        assert!(validate_tmdb_api_key("short").is_err());
+        assert!(validate_tmdb_api_key("key&extra=1").is_err());
+        assert_eq!(
+            validate_tmdb_poster_path("/abc.jpg").unwrap(),
+            "https://image.tmdb.org/t/p/w342/abc.jpg"
+        );
+        assert!(validate_tmdb_poster_path("https://evil.example/x.jpg").is_err());
+        assert!(validate_tmdb_poster_path("/../etc/passwd").is_err());
+        let nat64_public = "64:ff9b::808:808".parse::<Ipv6Addr>().unwrap();
+        assert!(!is_non_public_ipv6(nat64_public));
+        let nat64_meta = "64:ff9b::a9fe:a9fe".parse::<Ipv6Addr>().unwrap();
+        assert!(is_non_public_ipv6(nat64_meta));
     }
 
     #[test]

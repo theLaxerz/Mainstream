@@ -2,7 +2,7 @@
 
 use crate::commands::open::open_with_system;
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
-use crate::security::public_http_client;
+use crate::security::{public_http_client, validate_tmdb_api_key, validate_tmdb_poster_path};
 use chrono::{Duration, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -173,7 +173,7 @@ fn upsert_item(
     let poster_path = item
         .get("poster_path")
         .and_then(|v| v.as_str())
-        .map(|s| format!("https://image.tmdb.org/t/p/w342{s}"));
+        .and_then(|s| validate_tmdb_poster_path(s).ok());
     let release_date = item
         .get("release_date")
         .or_else(|| item.get("first_air_date"))
@@ -242,7 +242,8 @@ pub fn save_streaming_settings(
     if let Some(key) = api_key.as_deref() {
         let key = key.trim();
         if !key.is_empty() {
-            set_setting(db.conn(), SETTING_TMDB_KEY, key)?;
+            let key = validate_tmdb_api_key(key)?;
+            set_setting(db.conn(), SETTING_TMDB_KEY, &key)?;
         }
     }
     if let Some(ids) = enabled_providers {
