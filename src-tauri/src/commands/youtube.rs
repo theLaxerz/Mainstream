@@ -312,5 +312,6 @@ pub fn open_youtube_item(state: State<'_, DbState>, id: i64) -> Result<(), DbErr
         params![id],
         |row| row.get(0),
     )?;
+    let url = validate_youtube_watch_url(&url)?;
     open_with_system("url", &url)
 }
