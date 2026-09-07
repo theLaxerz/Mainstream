@@ -17,6 +17,10 @@ export default defineConfig(async () => ({
     port: 1420,
     strictPort: true,
     host: host || false,
+    // RUSTSEC-2026-0279 class (Rojo DNS rebinding): Vite already allows
+    // localhost / IPs. Never set allowedHosts: true. Extra hosts only when
+    // TAURI_DEV_HOST is set for remote/mobile debugging.
+    allowedHosts: host ? [host] : [],
     hmr: host
       ? {
           protocol: "ws",
@@ -28,5 +32,11 @@ export default defineConfig(async () => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+  },
+  preview: {
+    port: 1420,
+    strictPort: true,
+    host: host || false,
+    allowedHosts: host ? [host] : [],
   },
 }));
