@@ -30,7 +30,7 @@ mailparse = "0.15"
 keyring = { version = "3", features = ["apple-native"] }
 urlencoding = "2"
 base64 = "0.22"
-quick-xml = "0.37"
+quick-xml = "0.41"
 zip = "2.4"
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }

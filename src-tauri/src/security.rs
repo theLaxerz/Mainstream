@@ -82,6 +82,13 @@ fn is_non_public_ipv4(ip: Ipv4Addr) -> bool {
         || (o[0] == 198 && (18..=19).contains(&o[1]))
         // Reserved / class E 240.0.0.0/4 (also covers broadcast 255.255.255.255)
         || o[0] >= 240
+        // Azure WireServer / IMDS fabric (not RFC1918; used for instance metadata).
+        || is_azure_wireserver_ipv4(ip)
+}
+
+/// Azure `168.63.129.16` — host agent / WireServer, same role as IMDS.
+fn is_azure_wireserver_ipv4(ip: Ipv4Addr) -> bool {
+    ip.octets() == [168, 63, 129, 16]
 }
 
 fn is_non_public_ipv6(ip: Ipv6Addr) -> bool {
@@ -207,6 +214,7 @@ fn host_is_blocked(host: &str) -> bool {
         || host.ends_with(".onion")
         || host == "metadata.google.internal"
         || host == "instance-data"
+        || is_container_or_cluster_hostname(&host)
     {
         return true;
     }
@@ -220,6 +228,23 @@ fn host_is_blocked(host: &str) -> bool {
         return is_non_public_ipv4(v4);
     }
     false
+}
+
+/// In-cluster Kubernetes DNS and Docker Desktop helper names. Not covered by
+/// `.internal` / `.local` suffixes (`kubernetes.default`, `kubernetes.default.svc`).
+fn is_container_or_cluster_hostname(host: &str) -> bool {
+    host == "kubernetes"
+        || host == "kubernetes.default"
+        || host == "kubernetes.default.svc"
+        || host == "kubernetes.default.svc.cluster.local"
+        || host.ends_with(".svc.cluster.local")
+        || host == "host.docker.internal"
+        || host == "gateway.docker.internal"
+        || host == "kubernetes.docker.internal"
+        || host == "docker.for.mac.localhost"
+        || host == "docker.for.mac.host.internal"
+        || host == "host.containers.internal"
+        || host.ends_with(".docker.internal")
 }
 
 /// Parse IPv4 forms that `Ipv4Addr::from_str` rejects: a 32-bit dword,
@@ -332,14 +357,21 @@ pub fn ensure_imap_host_resolves_safely(host: &str) -> Result<(), DbError> {
 fn imap_resolved_ip_is_blocked(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
-            v4.is_loopback() || v4.is_link_local() || v4.is_unspecified() || v4.is_multicast()
+            v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_multicast()
+                || is_azure_wireserver_ipv4(v4)
         }
         IpAddr::V6(v6) => {
             if let Some(v4) = v6.to_ipv4_mapped() {
-                return v4.is_loopback()
-                    || v4.is_link_local()
-                    || v4.is_unspecified()
-                    || v4.is_multicast();
+                return imap_resolved_ip_is_blocked(IpAddr::V4(v4));
+            }
+            if is_local_use_nat64(v6) {
+                return true;
+            }
+            if let Some(v4) = nat64_embedded_ipv4(v6) {
+                return imap_resolved_ip_is_blocked(IpAddr::V4(v4));
             }
             v6.is_loopback()
                 || v6.is_multicast()
@@ -486,6 +518,7 @@ fn imap_host_is_blocked(host: &str) -> bool {
         || host.ends_with(".onion")
         || host == "metadata.google.internal"
         || host == "instance-data"
+        || is_container_or_cluster_hostname(&host)
     {
         return true;
     }
@@ -887,6 +920,12 @@ mod tests {
         // ISATAP wrapping RFC1918 (global-looking prefix, embedded 10.0.0.1).
         assert!(validate_feed_url("http://[2001:db8::5efe:a00:1]/").is_err());
         assert!(validate_feed_url("http://instance-data/").is_err());
+        // Azure WireServer / IMDS fabric + NAT64 wrap (168.63.129.16 → a83f:8110).
+        assert!(validate_feed_url("http://168.63.129.16/").is_err());
+        assert!(validate_feed_url("http://[64:ff9b::a83f:8110]/").is_err());
+        assert!(validate_feed_url("http://kubernetes.default/").is_err());
+        assert!(validate_feed_url("http://kubernetes.default.svc/").is_err());
+        assert!(validate_feed_url("http://host.docker.internal/").is_err());
         assert!(parse_obscured_ipv4("8.8.8.8").is_some());
         assert!(!is_non_public_ipv4(parse_obscured_ipv4("8.8.8.8").unwrap()));
         assert!(is_non_public_ipv4(parse_obscured_ipv4("127.1").unwrap()));
@@ -925,6 +964,10 @@ mod tests {
         assert!(validate_imap_host("127.1").is_err());
         assert!(validate_imap_host("mail.example.onion").is_err());
         assert!(validate_imap_host("instance-data").is_err());
+        assert!(validate_imap_host("168.63.129.16").is_err());
+        assert!(validate_imap_host("kubernetes.default").is_err());
+        assert!(validate_imap_host("kubernetes.default.svc").is_err());
+        assert!(validate_imap_host("host.docker.internal").is_err());
     }
 
     #[test]
@@ -1028,6 +1071,13 @@ mod tests {
             "arone",
             "aronenao",
             "tinymember",
+            // RUSTSEC-2026-0280 / 0281 — PolinRider malware yanked 2026-09-07
+            "greentic-setup-dev",
+            "greentic-setup",
+            "greentic-start",
+            "greentic-start-dev",
+            "greentic-operator",
+            "greentic-operator-dev",
         ] {
             let needle = format!("name = \"{dropper}\"");
             assert!(
