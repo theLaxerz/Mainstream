@@ -4,6 +4,12 @@ import react from "@vitejs/plugin-react";
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
+// Never `true` — that disables Host-header checks (DNS-rebinding class,
+// same as RUSTSEC-2026-0279 on unauthenticated localhost serve APIs).
+const allowedHosts = host
+  ? [host, "localhost", "127.0.0.1", "::1"]
+  : ["localhost", "127.0.0.1", "::1"];
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
@@ -17,6 +23,7 @@ export default defineConfig(async () => ({
     port: 1420,
     strictPort: true,
     host: host || false,
+    allowedHosts,
     hmr: host
       ? {
           protocol: "ws",
@@ -28,5 +35,11 @@ export default defineConfig(async () => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+  },
+  preview: {
+    port: 1420,
+    strictPort: true,
+    host: false,
+    allowedHosts,
   },
 }));

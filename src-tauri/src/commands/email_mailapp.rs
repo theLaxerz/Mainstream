@@ -10,6 +10,7 @@ use crate::commands::email::{
     SETTING_PORT, SETTING_PROVIDER, SETTING_USER,
 };
 use crate::db::{set_setting, DbError, DbState};
+use crate::security::validate_mailapp_account_name;
 use rusqlite::Connection;
 use serde::Serialize;
 use std::io::Read;
@@ -21,7 +22,8 @@ use tauri::{AppHandle, Manager};
 
 const MAIL_LIST_TIMEOUT: Duration = Duration::from_secs(15);
 const MAIL_SYNC_TIMEOUT: Duration = Duration::from_secs(25);
-const MAIL_TIMEOUT_HINT: &str = "Mail.app did not respond in time. Finish any Mail or Outlook sign-in windows, then try again.";
+const MAIL_TIMEOUT_HINT: &str =
+    "Mail.app did not respond in time. Finish any Mail or Outlook sign-in windows, then try again.";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,10 +55,7 @@ pub struct MailAppMessage {
 pub fn infer_account_kind(user_name: &str, account_type: &str) -> String {
     let user = user_name.trim().to_ascii_lowercase();
     let ty = account_type.trim().to_ascii_lowercase();
-    if user.contains("@gmail.")
-        || user.ends_with("@googlemail.com")
-        || ty.contains("gmail")
-    {
+    if user.contains("@gmail.") || user.ends_with("@googlemail.com") || ty.contains("gmail") {
         return "google".into();
     }
     if ty.contains("exchange")
@@ -69,7 +68,10 @@ pub fn infer_account_kind(user_name: &str, account_type: &str) -> String {
     {
         return "microsoft".into();
     }
-    if ty.contains("icloud") || user.contains("@icloud.") || user.contains("@me.com") || user.contains("@mac.com")
+    if ty.contains("icloud")
+        || user.contains("@icloud.")
+        || user.contains("@me.com")
+        || user.contains("@mac.com")
     {
         return "icloud".into();
     }
@@ -141,7 +143,12 @@ pub fn parse_message_rows(raw: &str) -> Vec<MailAppMessage> {
             continue;
         }
         let mut parts = line.splitn(5, '\t');
-        let id = parts.next().unwrap_or("").trim().parse::<i64>().unwrap_or(0);
+        let id = parts
+            .next()
+            .unwrap_or("")
+            .trim()
+            .parse::<i64>()
+            .unwrap_or(0);
         if id == 0 {
             continue;
         }
@@ -432,7 +439,8 @@ return {posix}
 }
 
 pub fn fetch_unread(account: &str, limit: usize) -> Result<Vec<MailAppMessage>, DbError> {
-    let raw = run_osascript_timed(&list_unread_script(account, limit), MAIL_SYNC_TIMEOUT)?;
+    let account = validate_mailapp_account_name(account)?;
+    let raw = run_osascript_timed(&list_unread_script(&account, limit), MAIL_SYNC_TIMEOUT)?;
     Ok(parse_message_rows(&raw)
         .into_iter()
         .map(|mut msg| {
@@ -443,17 +451,26 @@ pub fn fetch_unread(account: &str, limit: usize) -> Result<Vec<MailAppMessage>, 
         .collect())
 }
 
-pub fn fetch_informed_candidates(account: &str, limit: usize) -> Result<Vec<MailAppMessage>, DbError> {
-    let raw = run_osascript_timed(&list_informed_script(account, limit), MAIL_SYNC_TIMEOUT)?;
+pub fn fetch_informed_candidates(
+    account: &str,
+    limit: usize,
+) -> Result<Vec<MailAppMessage>, DbError> {
+    let account = validate_mailapp_account_name(account)?;
+    let raw = run_osascript_timed(&list_informed_script(&account, limit), MAIL_SYNC_TIMEOUT)?;
     Ok(parse_message_rows(&raw))
 }
 
 pub fn fetch_source(account: &str, id: i64, dest: &Path) -> Result<Vec<u8>, DbError> {
+    let account = validate_mailapp_account_name(account)?;
+    let dest_s = dest.to_string_lossy();
+    if dest_s.contains(['\n', '\r', '\0', '"']) || dest_s.contains("..") {
+        return Err(DbError::Message("Mail.app source path is invalid".into()));
+    }
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
     run_osascript_timed(
-        &source_script(account, id, &dest.to_string_lossy()),
+        &source_script(&account, id, dest_s.as_ref()),
         MAIL_SYNC_TIMEOUT,
     )?;
     Ok(std::fs::read(dest)?)
@@ -461,14 +478,9 @@ pub fn fetch_source(account: &str, id: i64, dest: &Path) -> Result<Vec<u8>, DbEr
 
 pub fn sync_mailapp_inbox(conn: &Connection) -> Result<EmailSyncResult, DbError> {
     let settings = read_settings(conn)?;
-    let account = settings
-        .mailapp_account
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| DbError::Message("Pick a Mail.app account in Email settings first.".into()))?;
-    let mailbox = mailbox_key(account);
-    let messages = fetch_unread(account, 200)?;
+    let account = validate_mailapp_account_name(settings.mailapp_account.as_deref().unwrap_or(""))?;
+    let mailbox = mailbox_key(&account);
+    let messages = fetch_unread(&account, 200)?;
     let known = load_known_contacts();
     let mut still_unread = std::collections::HashSet::new();
     let mut fetched = 0usize;
@@ -539,10 +551,7 @@ pub async fn list_mail_accounts() -> Result<MailAppAccountsResult, DbError> {
 }
 
 fn connect_mail_account(state: &DbState, name: String) -> Result<EmailSettings, DbError> {
-    let name = name.trim().to_string();
-    if name.is_empty() {
-        return Err(DbError::Message("Mail account name is required".into()));
-    }
+    let name = validate_mailapp_account_name(&name)?;
     let accounts = list_accounts()?;
     let account = accounts
         .accounts
@@ -575,10 +584,7 @@ fn connect_mail_account(state: &DbState, name: String) -> Result<EmailSettings, 
 }
 
 #[tauri::command]
-pub async fn use_mail_account(
-    app: AppHandle,
-    name: String,
-) -> Result<EmailSettings, DbError> {
+pub async fn use_mail_account(app: AppHandle, name: String) -> Result<EmailSettings, DbError> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<DbState>();
         connect_mail_account(&state, name)
@@ -608,10 +614,7 @@ mod tests {
     #[test]
     fn infers_google_and_microsoft_accounts() {
         assert_eq!(infer_account_kind("ada@gmail.com", "imap"), "google");
-        assert_eq!(
-            infer_account_kind("ada@outlook.com", "imap"),
-            "microsoft"
-        );
+        assert_eq!(infer_account_kind("ada@outlook.com", "imap"), "microsoft");
         assert_eq!(
             infer_account_kind("ada@contoso.com", "exchange"),
             "microsoft"
@@ -621,9 +624,8 @@ mod tests {
 
     #[test]
     fn parses_account_tsv() {
-        let rows = parse_account_rows(
-            "Gmail\tada@gmail.com\timap\nOutlook\tada@outlook.com\texchange\n",
-        );
+        let rows =
+            parse_account_rows("Gmail\tada@gmail.com\timap\nOutlook\tada@outlook.com\texchange\n");
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].kind, "google");
         assert_eq!(rows[1].kind, "microsoft");
@@ -643,9 +645,8 @@ mod tests {
 
     #[test]
     fn parses_message_tsv() {
-        let rows = parse_message_rows(
-            "42\t<id@mail>\tAda <ada@x.com>\tHello\t2026-08-28T12:00:00Z\n",
-        );
+        let rows =
+            parse_message_rows("42\t<id@mail>\tAda <ada@x.com>\tHello\t2026-08-28T12:00:00Z\n");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, 42);
         assert_eq!(rows[0].subject, "Hello");
@@ -654,11 +655,17 @@ mod tests {
 
     #[test]
     fn maps_mail_timeout_and_permission_errors() {
-        assert!(osascript_failure_message("AppleEvent timed out. (-1712)", "")
-            .contains("did not respond in time"));
-        assert!(osascript_failure_message("not authorized to send Apple events", "")
-            .contains("Automation"));
-        assert!(osascript_failure_message("Application isn’t running. (-609)", "")
-            .contains("Open Mail"));
+        assert!(
+            osascript_failure_message("AppleEvent timed out. (-1712)", "")
+                .contains("did not respond in time")
+        );
+        assert!(
+            osascript_failure_message("not authorized to send Apple events", "")
+                .contains("Automation")
+        );
+        assert!(
+            osascript_failure_message("Application isn’t running. (-609)", "")
+                .contains("Open Mail")
+        );
     }
 }
