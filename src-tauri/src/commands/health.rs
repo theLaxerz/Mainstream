@@ -4,7 +4,7 @@ use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
 use crate::security::{max_health_export_bytes, validate_health_export_path};
 use chrono::{DateTime, Local, NaiveDate};
 use quick_xml::events::Event;
-use quick_xml::Reader;
+use quick_xml::{Reader, XmlVersion};
 use rusqlite::params;
 use serde::Serialize;
 use std::fs::File;
@@ -77,7 +77,14 @@ fn ingest_export_xml<R: Read>(
                 let mut end_date = String::new();
                 for attr in e.attributes().flatten() {
                     let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
-                    let val = attr.unescape_value().unwrap_or_default().to_string();
+                    // `unescape_value` is cfg'd off when any crate enables
+                    // quick-xml's `encoding` feature (feed-rs does). The decoder
+                    // path works either way (RUSTSEC-2026-0194 still uses
+                    // `attributes()` with the default duplicate-name check).
+                    let val = attr
+                        .decoded_and_normalized_value(XmlVersion::Implicit1_0, xml.decoder())
+                        .unwrap_or_default()
+                        .into_owned();
                     match key.as_str() {
                         "type" => record_type = val,
                         "value" => value = val,

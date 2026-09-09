@@ -38,6 +38,18 @@ pub fn deny(msg: impl Into<String>) -> DbError {
     DbError::Message(msg.into())
 }
 
+/// C0 controls, DEL, NEL, and Unicode line/paragraph separators. Same class as
+/// GHSA-w27v-7q3p-w38r (browsers strip TAB/CR/LF from URL schemes before
+/// parsing) and GHSA-jxfw-x594-9x9m (U+2028 / U+2029 log/header breaks).
+fn contains_disallowed_controls(s: &str) -> bool {
+    s.chars().any(|c| {
+        matches!(
+            c,
+            '\0'..='\x1f' | '\u{7f}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+        )
+    })
+}
+
 fn scheme_of(raw: &str) -> Option<&str> {
     let trimmed = raw.trim();
     let colon = trimmed.find(':')?;
@@ -205,6 +217,12 @@ fn isatap_embedded_ipv4(ip: Ipv6Addr) -> Option<Ipv4Addr> {
 fn host_is_blocked(host: &str) -> bool {
     let host = host.trim().trim_matches(|c| c == '[' || c == ']');
     let host = host.trim_end_matches('.').to_ascii_lowercase();
+    // Fail closed on raw Unicode hosts (homographs of localhost / metadata).
+    // `url` IDNA-encodes international domains to ASCII punycode first, so
+    // legitimate feeds still work. Same class as GHSA-wmmp-3585-3rmp.
+    if !host.is_ascii() {
+        return true;
+    }
     if host.is_empty()
         || host == "localhost"
         || host == "localhost.localdomain"
@@ -423,7 +441,7 @@ pub fn parse_public_http_url(raw: &str) -> Result<Url, DbError> {
     if raw.is_empty() || raw.len() > 2048 {
         return Err(deny("URL is empty or too long"));
     }
-    if raw.contains(['\n', '\r', '\0', '\t']) {
+    if contains_disallowed_controls(raw) {
         return Err(deny("URL contains invalid characters"));
     }
     let url = Url::parse(raw).map_err(|_| deny("invalid URL"))?;
@@ -453,7 +471,7 @@ pub fn validate_open_url(raw: &str) -> Result<String, DbError> {
     if raw.is_empty() || raw.len() > 4096 {
         return Err(deny("target is required"));
     }
-    if raw.contains(['\n', '\r', '\0']) {
+    if contains_disallowed_controls(raw) {
         return Err(deny("target contains invalid characters"));
     }
     let Some(scheme) = scheme_of(raw) else {
@@ -476,7 +494,7 @@ pub fn validate_app_target(raw: &str) -> Result<String, DbError> {
     if raw.is_empty() || raw.len() > 1024 {
         return Err(deny("app target is required"));
     }
-    if raw.contains(['\n', '\r', '\0']) || raw.starts_with('-') {
+    if contains_disallowed_controls(raw) || raw.starts_with('-') {
         return Err(deny("app target contains invalid characters"));
     }
     if raw.contains('/') || raw.starts_with('~') {
@@ -497,7 +515,7 @@ pub fn validate_imap_host(raw: &str) -> Result<String, DbError> {
     if host.is_empty() || host.len() > 253 {
         return Err(deny("IMAP host is invalid"));
     }
-    if host.contains(['/', '\\', ' ', '\n', '\r', '\t', '@', '\0']) {
+    if contains_disallowed_controls(host) || host.contains(['/', '\\', ' ', '@', '%']) {
         return Err(deny("IMAP host contains invalid characters"));
     }
     // Block loopback / link-local / metadata. RFC1918 is allowed so a user can
@@ -511,6 +529,9 @@ pub fn validate_imap_host(raw: &str) -> Result<String, DbError> {
 fn imap_host_is_blocked(host: &str) -> bool {
     let host = host.trim().trim_matches(|c| c == '[' || c == ']');
     let host = host.trim_end_matches('.').to_ascii_lowercase();
+    if !host.is_ascii() {
+        return true;
+    }
     if host.is_empty()
         || host == "localhost"
         || host == "localhost.localdomain"
@@ -547,7 +568,7 @@ pub fn validate_imap_mailbox(raw: &str) -> Result<String, DbError> {
     if name.is_empty() || name.len() > 255 {
         return Err(deny("IMAP mailbox is invalid"));
     }
-    if name.contains(['\n', '\r', '\0', '"', '\\']) {
+    if contains_disallowed_controls(name) || name.contains(['"', '\\']) {
         return Err(deny("IMAP mailbox contains invalid characters"));
     }
     Ok(name.to_string())
@@ -560,7 +581,7 @@ pub fn validate_imap_user(raw: &str) -> Result<String, DbError> {
         return Err(deny("IMAP username is invalid"));
     }
     // Also reject SASL separator `\x01` used in XOAUTH2 `user=…\x01auth=Bearer…`.
-    if user.contains(['\n', '\r', '\0', '\t', '"', '\u{0001}']) {
+    if contains_disallowed_controls(user) || user.contains(['"', '\u{0001}']) {
         return Err(deny("IMAP username contains invalid characters"));
     }
     Ok(user.to_string())
@@ -574,7 +595,7 @@ pub fn validate_imap_password(raw: &str) -> Result<String, DbError> {
     if password.is_empty() || password.len() > 512 {
         return Err(deny("IMAP password is invalid"));
     }
-    if password.contains(['\n', '\r', '\0']) {
+    if contains_disallowed_controls(password) {
         return Err(deny("IMAP password contains invalid characters"));
     }
     Ok(password.to_string())
@@ -586,7 +607,7 @@ pub fn validate_oauth_token(raw: &str) -> Result<String, DbError> {
     if token.is_empty() || token.len() > 8192 {
         return Err(deny("OAuth token is invalid"));
     }
-    if token.contains(['\n', '\r', '\0', '\u{0001}']) {
+    if contains_disallowed_controls(token) || token.contains('\u{0001}') {
         return Err(deny("OAuth token contains invalid characters"));
     }
     Ok(token.to_string())
@@ -647,7 +668,7 @@ pub fn validate_mailapp_account_name(raw: &str) -> Result<String, DbError> {
     }
     // Reject quote/backslash even though we escape them — keeps the AppleScript
     // literal boring if a compromised webview supplies the account name.
-    if name.contains(['\n', '\r', '\0', '"', '\\']) {
+    if contains_disallowed_controls(name) || name.contains(['"', '\\']) {
         return Err(deny("Mail account name contains invalid characters"));
     }
     Ok(name.to_string())
@@ -697,7 +718,7 @@ pub fn validate_imessage_ref(raw: &str) -> Result<String, DbError> {
     if s.is_empty() || s.len() > 256 {
         return Err(deny("chat identifier is invalid"));
     }
-    if s.contains(['\n', '\r', '\0', '/', '\\']) || s.contains("..") {
+    if contains_disallowed_controls(s) || s.contains(['/', '\\']) || s.contains("..") {
         return Err(deny("chat identifier contains invalid characters"));
     }
     Ok(s.to_string())
@@ -712,7 +733,7 @@ pub fn validate_weather_query(raw: &str) -> Result<String, DbError> {
     if q.len() > 100 {
         return Err(deny("search query is too long"));
     }
-    if q.contains(['\n', '\r', '\0']) {
+    if contains_disallowed_controls(q) {
         return Err(deny("search query contains invalid characters"));
     }
     Ok(q.to_string())
@@ -737,7 +758,7 @@ pub fn validate_finance_label(raw: &str, what: &str, max_len: usize) -> Result<S
     if value.len() > max_len {
         return Err(deny(format!("{what} is too long")));
     }
-    if value.contains(['\n', '\r', '\0']) {
+    if contains_disallowed_controls(value) {
         return Err(deny(format!("{what} contains invalid characters")));
     }
     Ok(value.to_string())
@@ -749,7 +770,7 @@ pub fn validate_finance_description(raw: &str) -> Result<String, DbError> {
     if value.len() > 500 {
         return Err(deny("description is too long"));
     }
-    if value.contains(['\n', '\r', '\0']) {
+    if contains_disallowed_controls(value) {
         return Err(deny("description contains invalid characters"));
     }
     Ok(value.to_string())
@@ -796,7 +817,7 @@ pub fn validate_health_export_path(raw: &str) -> Result<(), DbError> {
     if raw.is_empty() || raw.len() > 1024 {
         return Err(deny("Health export path is required"));
     }
-    if raw.contains(['\n', '\r', '\0']) {
+    if contains_disallowed_controls(raw) {
         return Err(deny("Health export path contains invalid characters"));
     }
     let path = Path::new(raw);
@@ -883,6 +904,11 @@ mod tests {
         assert!(validate_open_url("smb://fileserver/share").is_err());
         assert!(validate_open_url("http://127.0.0.1/").is_err());
         assert!(validate_open_url("https://localhost/secret").is_err());
+        // GHSA-w27v-7q3p-w38r class: TAB/C0 stripped from schemes by browsers.
+        assert!(validate_open_url("java\tscript:alert(1)").is_err());
+        assert!(validate_open_url("https://example.com/\talert").is_err());
+        assert!(validate_open_url("message://id\u{2028}evil").is_err());
+        assert!(validate_app_target("Safari\t-a Calculator").is_err());
     }
 
     #[test]
@@ -968,6 +994,8 @@ mod tests {
         assert!(validate_imap_host("kubernetes.default").is_err());
         assert!(validate_imap_host("kubernetes.default.svc").is_err());
         assert!(validate_imap_host("host.docker.internal").is_err());
+        assert!(validate_imap_host("localhоst").is_err());
+        assert!(validate_imap_host("fe80::1%lo0").is_err());
     }
 
     #[test]
