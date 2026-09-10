@@ -485,8 +485,43 @@ pub fn validate_open_url(raw: &str) -> Result<String, DbError> {
     // hosts. Custom schemes (message:, calshow:) are allowlisted above.
     if scheme_l == "http" || scheme_l == "https" {
         parse_public_http_url(raw)?;
+    } else if scheme_l == "mailto" {
+        ensure_safe_mailto(raw)?;
     }
     Ok(raw.to_string())
+}
+
+/// Mail.app / GNOME Evolution class (CVE-2026-88859, CVE-2020-11879):
+/// `mailto:?attach=` hands local files to the mail composer, and nested
+/// `javascript:` / `data:` values can be assigned to iframe `src` after decode.
+fn ensure_safe_mailto(raw: &str) -> Result<(), DbError> {
+    let url = Url::parse(raw).map_err(|_| deny("invalid mailto URL"))?;
+    if url.scheme() != "mailto" {
+        return Err(deny("blocked URL scheme"));
+    }
+    if nested_dangerous_scheme(url.path()) {
+        return Err(deny("mailto contains a blocked nested scheme"));
+    }
+    for (key, value) in url.query_pairs() {
+        let key_l = key.to_ascii_lowercase();
+        if matches!(key_l.as_str(), "attach" | "attachment" | "attachments") {
+            return Err(deny("mailto must not attach local files"));
+        }
+        if nested_dangerous_scheme(&value) {
+            return Err(deny("mailto contains a blocked nested scheme"));
+        }
+    }
+    Ok(())
+}
+
+fn nested_dangerous_scheme(s: &str) -> bool {
+    let lower = s.to_ascii_lowercase();
+    lower.contains("javascript:")
+        || lower.contains("vbscript:")
+        || lower.contains("file://")
+        || lower.contains("data:text/")
+        || lower.contains("data:image/")
+        || lower.contains("data:application/")
 }
 
 pub fn validate_app_target(raw: &str) -> Result<String, DbError> {
@@ -909,6 +944,14 @@ mod tests {
         assert!(validate_open_url("https://example.com/\talert").is_err());
         assert!(validate_open_url("message://id\u{2028}evil").is_err());
         assert!(validate_app_target("Safari\t-a Calculator").is_err());
+        // CVE-2026-88859 / CVE-2020-11879 class: nested schemes and attach=.
+        assert!(validate_open_url("mailto:ada@example.com").is_ok());
+        assert!(validate_open_url("mailto:ada@example.com?subject=Hi").is_ok());
+        assert!(validate_open_url("mailto:?attach=/etc/passwd").is_err());
+        assert!(validate_open_url("mailto:ada@example.com?attachment=file:///tmp/x").is_err());
+        assert!(validate_open_url("mailto:ada@example.com?%61ttach=/tmp/secret").is_err());
+        assert!(validate_open_url("mailto:ada@example.com?body=javascript:alert(1)").is_err());
+        assert!(validate_open_url("mailto:javascript:alert(1)").is_err());
     }
 
     #[test]
@@ -1085,6 +1128,8 @@ mod tests {
             ("arrayref", "0.3.10"),
             ("internment", "0.8.7"),
             ("append-only-vec", "0.1.9"),
+            // RUSTSEC-2026-0282 — double-free when Drop panics (< 0.3.1)
+            ("aligned_box", "0.3.0"),
         ] {
             let stanza = format!("name = \"{name}\"\nversion = \"{ver}\"");
             assert!(
