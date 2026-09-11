@@ -1,7 +1,9 @@
 //! Apple Health `export.xml` import (local file / zip).
 
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
-use crate::security::{max_health_export_bytes, validate_health_export_path};
+use crate::security::{
+    max_health_export_bytes, validate_health_export_path, zip_entry_is_apple_health_export,
+};
 use chrono::{DateTime, Local, NaiveDate};
 use quick_xml::events::Event;
 use quick_xml::{Reader, XmlVersion};
@@ -152,26 +154,23 @@ fn open_export_reader(path: &Path) -> Result<Box<dyn Read>, DbError> {
             let Some(enclosed) = file.enclosed_name() else {
                 continue;
             };
-            let name = enclosed
-                .to_string_lossy()
-                .replace('\\', "/")
-                .to_ascii_lowercase();
-            if name.ends_with("export.xml") {
-                if file.size() > max_health_export_bytes() {
-                    return Err(DbError::Message(
-                        "Health export.xml inside zip is too large".into(),
-                    ));
-                }
-                let mut limited = (&mut file).take(max_health_export_bytes());
-                let mut buf = Vec::new();
-                limited.read_to_end(&mut buf).map_err(DbError::Io)?;
-                if buf.len() as u64 >= max_health_export_bytes() {
-                    return Err(DbError::Message(
-                        "Health export.xml inside zip is too large".into(),
-                    ));
-                }
-                return Ok(Box::new(std::io::Cursor::new(buf)));
+            if !zip_entry_is_apple_health_export(&enclosed) {
+                continue;
             }
+            if file.size() > max_health_export_bytes() {
+                return Err(DbError::Message(
+                    "Health export.xml inside zip is too large".into(),
+                ));
+            }
+            let mut limited = (&mut file).take(max_health_export_bytes());
+            let mut buf = Vec::new();
+            limited.read_to_end(&mut buf).map_err(DbError::Io)?;
+            if buf.len() as u64 >= max_health_export_bytes() {
+                return Err(DbError::Message(
+                    "Health export.xml inside zip is too large".into(),
+                ));
+            }
+            return Ok(Box::new(std::io::Cursor::new(buf)));
         }
         return Err(DbError::Message(
             "Zip does not contain export.xml (Apple Health export)".into(),

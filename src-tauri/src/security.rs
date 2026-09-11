@@ -419,10 +419,32 @@ pub fn public_http_client(
     timeout_secs: u64,
     user_agent: Option<&str>,
 ) -> Result<reqwest::blocking::Client, DbError> {
+    http_client_with_redirect(timeout_secs, user_agent, |previous, next| {
+        blocked_http_client_redirect(previous.len(), next)
+    })
+}
+
+/// HTTP client for requests that carry tokens, cookies, or API keys.
+///
+/// Same class as CVE-2026-88013 (rclone) and CVE-2026-63481 (Hurl): default
+/// redirect following forwards `Authorization` / cookies / query secrets to a
+/// different host, and HTTPS→HTTP drops them onto the wire.
+pub fn authenticated_http_client(
+    timeout_secs: u64,
+    user_agent: Option<&str>,
+) -> Result<reqwest::blocking::Client, DbError> {
+    http_client_with_redirect(timeout_secs, user_agent, blocked_authenticated_redirect)
+}
+
+fn http_client_with_redirect(
+    timeout_secs: u64,
+    user_agent: Option<&str>,
+    policy: fn(&[Url], &Url) -> Result<(), &'static str>,
+) -> Result<reqwest::blocking::Client, DbError> {
     let mut builder = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .redirect(reqwest::redirect::Policy::custom(
-            |attempt| match blocked_http_client_redirect(attempt.previous().len(), attempt.url()) {
+            move |attempt| match policy(attempt.previous(), attempt.url()) {
                 Ok(()) => attempt.follow(),
                 Err(_) => attempt.error("blocked redirect"),
             },
@@ -919,6 +941,47 @@ pub fn blocked_http_client_redirect(previous: usize, next: &Url) -> Result<(), &
     Ok(())
 }
 
+/// Keep Bearer / cookie / query-key requests on the original HTTPS origin.
+pub fn blocked_authenticated_redirect(previous: &[Url], next: &Url) -> Result<(), &'static str> {
+    blocked_http_client_redirect(previous.len(), next)?;
+    let Some(from) = previous.last() else {
+        return Ok(());
+    };
+    if from.scheme() == "https" && next.scheme() != "https" {
+        return Err("https downgrade");
+    }
+    let from_host = from.host_str().unwrap_or_default();
+    let next_host = next.host_str().unwrap_or_default();
+    if !from_host.eq_ignore_ascii_case(next_host) {
+        return Err("cross-host redirect");
+    }
+    if from.port_or_known_default() != next.port_or_known_default() {
+        return Err("cross-origin redirect");
+    }
+    Ok(())
+}
+
+/// Same class as CVE-2026-88014 (rclone zip-slip): `ends_with("export.xml")`
+/// treats sibling names (`notexport.xml`) as in-namespace, and `path.Clean`
+/// can hide `..`. After `ZipArchive::enclosed_name` rejects absolute/`..`
+/// paths, require the basename to be exactly `export.xml`.
+pub fn zip_entry_is_apple_health_export(enclosed: &Path) -> bool {
+    if enclosed.as_os_str().is_empty() {
+        return false;
+    }
+    if enclosed
+        .components()
+        .any(|c| !matches!(c, Component::Normal(_)))
+    {
+        return false;
+    }
+    enclosed
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.eq_ignore_ascii_case("export.xml"))
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1010,6 +1073,43 @@ mod tests {
         assert!(validate_health_export_path("/Users/me/export.zip").is_ok());
         assert!(validate_health_export_path("/Users/me/Library/Messages/chat.db").is_err());
         assert!(validate_health_export_path("../export.xml").is_err());
+    }
+
+    #[test]
+    fn zip_entry_requires_exact_export_xml_basename() {
+        // CVE-2026-88014 class: sibling / prefix matching and `.` / `..`.
+        assert!(zip_entry_is_apple_health_export(Path::new("export.xml")));
+        assert!(zip_entry_is_apple_health_export(Path::new(
+            "apple_health_export/export.xml"
+        )));
+        assert!(!zip_entry_is_apple_health_export(Path::new(
+            "notexport.xml"
+        )));
+        assert!(!zip_entry_is_apple_health_export(Path::new(
+            "apple_health_export.xml"
+        )));
+        assert!(!zip_entry_is_apple_health_export(Path::new(
+            "../export.xml"
+        )));
+        assert!(!zip_entry_is_apple_health_export(Path::new("/export.xml")));
+        assert!(!zip_entry_is_apple_health_export(Path::new(".")));
+        assert!(!zip_entry_is_apple_health_export(Path::new(
+            "apple_health_export/../export.xml"
+        )));
+    }
+
+    #[test]
+    fn authenticated_redirect_stays_on_https_origin() {
+        // Public literals skip DNS in `ensure_public_resolved_host`.
+        let from = Url::parse("https://8.8.8.8/token").unwrap();
+        let same = Url::parse("https://8.8.8.8/v2").unwrap();
+        let other = Url::parse("https://1.1.1.1/steal").unwrap();
+        let http = Url::parse("http://8.8.8.8/token").unwrap();
+        let other_port = Url::parse("https://8.8.8.8:8443/token").unwrap();
+        assert!(blocked_authenticated_redirect(std::slice::from_ref(&from), &same).is_ok());
+        assert!(blocked_authenticated_redirect(std::slice::from_ref(&from), &other).is_err());
+        assert!(blocked_authenticated_redirect(std::slice::from_ref(&from), &http).is_err());
+        assert!(blocked_authenticated_redirect(std::slice::from_ref(&from), &other_port).is_err());
     }
 
     #[test]

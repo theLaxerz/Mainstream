@@ -12,7 +12,7 @@ use crate::commands::email::{
 };
 use crate::commands::open::open_with_system;
 use crate::db::{get_setting, set_setting, DbError, DbState};
-use crate::security::{public_http_client, validate_oauth_client_id, validate_oauth_token};
+use crate::security::{authenticated_http_client, validate_oauth_client_id, validate_oauth_token};
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use imap::Authenticator;
@@ -187,7 +187,7 @@ pub fn email_from_id_token(id_token: &str) -> Option<String> {
 }
 
 fn http_client() -> Result<reqwest::blocking::Client, DbError> {
-    public_http_client(20, Some("MainstreamLifeOS/0.1 (+local; OAuth)"))
+    authenticated_http_client(20, Some("MainstreamLifeOS/0.1 (+local; OAuth)"))
 }
 
 fn wait_for_callback(listener: &TcpListener, expected_state: &str) -> Result<String, DbError> {

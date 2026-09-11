@@ -8,7 +8,7 @@
 use crate::commands::home::HomeDevice;
 use crate::db::{get_setting, set_setting, DbError, DbState};
 use crate::security::{
-    ensure_public_resolved_host, parse_public_https_url, path_is_within, public_http_client,
+    authenticated_http_client, ensure_public_resolved_host, parse_public_https_url, path_is_within,
     validate_cache_file_stem, validate_dns_label,
 };
 use base64::Engine;
@@ -125,9 +125,9 @@ fn with_cookies(
 }
 
 fn rest_client() -> Result<Client, DbError> {
-    // Same redirect/SSRF policy as other untrusted fetches: Blink thumbnails and
-    // region endpoints must not follow redirects onto loopback or link-local.
-    public_http_client(30, None)
+    // Thumbnails and region endpoints carry Bearer tokens — stay on origin
+    // (CVE-2026-88013 class) and still reject private redirect targets.
+    authenticated_http_client(30, None)
 }
 
 fn pkce_pair() -> (String, String) {

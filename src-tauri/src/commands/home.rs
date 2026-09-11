@@ -2,7 +2,7 @@
 
 use crate::commands::blink::{self, blink_is_connected};
 use crate::db::{get_setting, set_setting, DbError, DbState};
-use crate::security::public_http_client;
+use crate::security::authenticated_http_client;
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -59,7 +59,7 @@ fn load_ring_token() -> Result<Option<String>, DbError> {
 }
 
 fn http_client() -> Result<reqwest::blocking::Client, DbError> {
-    public_http_client(25, None)
+    authenticated_http_client(25, None)
 }
 
 fn ring_access_token(refresh_token: &str) -> Result<String, DbError> {

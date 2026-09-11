@@ -2,7 +2,9 @@
 
 use crate::commands::open::open_with_system;
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
-use crate::security::{public_http_client, validate_tmdb_api_key, validate_tmdb_poster_path};
+use crate::security::{
+    authenticated_http_client, validate_tmdb_api_key, validate_tmdb_poster_path,
+};
 use chrono::{Duration, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -103,7 +105,7 @@ pub fn default_providers() -> Vec<StreamingProvider> {
 }
 
 fn http_client() -> Result<reqwest::blocking::Client, DbError> {
-    public_http_client(25, Some("MainstreamLifeOS/0.1 (+local; TMDB)"))
+    authenticated_http_client(25, Some("MainstreamLifeOS/0.1 (+local; TMDB)"))
 }
 
 pub(crate) fn load_api_key(conn: &Connection) -> Result<String, DbError> {
