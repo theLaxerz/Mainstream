@@ -3,6 +3,22 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+const MAX_NOTE_TITLE_CHARS: usize = 500;
+const MAX_NOTE_BODY_BYTES: usize = 256 * 1024;
+
+fn validate_note_text(title: &str, body: &str) -> Result<(), DbError> {
+    if title.len() > MAX_NOTE_TITLE_CHARS {
+        return Err(DbError::Message("note title is too long".into()));
+    }
+    if body.len() > MAX_NOTE_BODY_BYTES {
+        return Err(DbError::Message("note body is too large".into()));
+    }
+    if title.contains('\0') || body.contains('\0') {
+        return Err(DbError::Message("note contains invalid characters".into()));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Note {
@@ -81,6 +97,7 @@ pub fn create_note(state: State<'_, DbState>, input: CreateNoteInput) -> Result<
         return Err(DbError::Message("title is required".into()));
     }
     let body = input.body.unwrap_or_default();
+    validate_note_text(title, &body)?;
     db.conn().execute(
         "INSERT INTO notes (title, body, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
         params![title, body, now, now],
@@ -107,6 +124,7 @@ pub fn update_note(state: State<'_, DbState>, input: UpdateNoteInput) -> Result<
         .filter(|t| !t.is_empty())
         .unwrap_or(existing.title);
     let body = input.body.unwrap_or(existing.body);
+    validate_note_text(&title, &body)?;
     let updated_at = now_iso();
 
     db.conn().execute(
