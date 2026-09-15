@@ -4,7 +4,7 @@ use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
 use crate::security::{
     max_health_export_bytes, reject_symlink_path, validate_health_export_path,
     zip_entry_index_is_safe, zip_entry_is_apple_health_export, zip_entry_name_is_confined,
-    zip_member_size_is_safe,
+    zip_member_is_regular_file, zip_member_size_is_safe,
 };
 use chrono::{DateTime, Local, NaiveDate};
 use quick_xml::events::Event;
@@ -158,7 +158,9 @@ fn open_export_reader(path: &Path) -> Result<Box<dyn Read>, DbError> {
                 .map_err(|e| DbError::Message(format!("zip entry: {e}")))?;
             // Raw header first: GitLab CVE-2026-85706 / Mockoon CVE-2026-59149
             // confinement missed encoded `file.Path` and prefix-only bases.
-            if !zip_entry_name_is_confined(file.name()) || file.is_symlink() {
+            if !zip_entry_name_is_confined(file.name())
+                || !zip_member_is_regular_file(file.is_symlink(), file.unix_mode())
+            {
                 continue;
             }
             // `enclosed_name` rejects zip-slip (`../`, absolute paths). We only

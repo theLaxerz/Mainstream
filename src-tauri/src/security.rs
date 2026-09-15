@@ -974,7 +974,7 @@ pub fn confined_join(root: &Path, name: &str) -> Result<PathBuf, DbError> {
 pub fn confined_dest(root: &Path, name: &str) -> Result<PathBuf, DbError> {
     let candidate = confined_join(root, name)?;
     if candidate.symlink_metadata().is_ok() {
-        reject_symlink_path(&candidate)?;
+        reject_non_regular_file(&candidate)?;
         if !path_is_within(root, &candidate) {
             return Err(deny("composed path escaped its directory"));
         }
@@ -982,13 +982,26 @@ pub fn confined_dest(root: &Path, name: &str) -> Result<PathBuf, DbError> {
     Ok(candidate)
 }
 
-/// After a cache write, refuse a dest that is now a symlink or that
-/// canonicalizes outside `root` (TOCTOU rename/replace).
+/// After a cache write, refuse a dest that is now a symlink, directory, or
+/// that canonicalizes outside `root` (TOCTOU rename/replace). CPython
+/// CVE-2026-82049 extracted a hard link onto a planted symlink and mutated
+/// a file outside the dest tree.
 pub fn confirm_confined_write(root: &Path, path: &Path) -> Result<(), DbError> {
-    reject_symlink_path(path)?;
+    if let Err(err) = reject_non_regular_file(path) {
+        let _ = std::fs::remove_file(path);
+        return Err(err);
+    }
     if !path_is_within(root, path) {
         let _ = std::fs::remove_file(path);
         return Err(deny("composed path escaped its directory"));
+    }
+    Ok(())
+}
+
+fn reject_non_regular_file(path: &Path) -> Result<(), DbError> {
+    let meta = std::fs::symlink_metadata(path).map_err(DbError::Io)?;
+    if meta.file_type().is_symlink() || !meta.file_type().is_file() {
+        return Err(deny("path must be a regular file"));
     }
     Ok(())
 }
@@ -1147,6 +1160,24 @@ pub fn zip_member_size_is_safe(uncompressed: u64, compressed: u64) -> bool {
         && uncompressed <= i32::MAX as u64
 }
 
+/// Refuse zip members that are not regular files. CPython CVE-2026-82049
+/// (2026-09-14) let a tar hard link follow a planted symlink out of the
+/// extract tree; zip Unix extra fields can encode the same special types.
+pub fn zip_member_is_regular_file(is_symlink: bool, unix_mode: Option<u32>) -> bool {
+    const S_IFMT: u32 = 0o170000;
+    const S_IFREG: u32 = 0o100000;
+    if is_symlink {
+        return false;
+    }
+    match unix_mode {
+        None => true,
+        Some(mode) => {
+            let file_type = mode & S_IFMT;
+            file_type == 0 || file_type == S_IFREG
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1290,6 +1321,15 @@ mod tests {
         assert!(!zip_member_size_is_safe(MAX_HEALTH_EXPORT_BYTES + 1, 1));
         assert!(!zip_member_size_is_safe(1, MAX_HEALTH_EXPORT_BYTES + 1));
         assert!(!zip_member_size_is_safe(u64::MAX, 1));
+        // CVE-2026-82049 class: special files / links must not be treated as
+        // the Apple Health export.xml payload.
+        assert!(zip_member_is_regular_file(false, None));
+        assert!(zip_member_is_regular_file(false, Some(0o100644)));
+        assert!(zip_member_is_regular_file(false, Some(0o644)));
+        assert!(!zip_member_is_regular_file(true, Some(0o100644)));
+        assert!(!zip_member_is_regular_file(false, Some(0o120777))); // symlink
+        assert!(!zip_member_is_regular_file(false, Some(0o040755))); // directory
+        assert!(!zip_member_is_regular_file(false, Some(0o010644))); // fifo
     }
 
     #[test]
@@ -1331,6 +1371,8 @@ mod tests {
             std::os::unix::fs::symlink(&target, &link).unwrap();
             assert!(reject_symlink_path(&link).is_err());
             assert!(reject_symlink_path(&target).is_ok());
+            assert!(confirm_confined_write(&dir, &link).is_err());
+            assert!(confirm_confined_write(&dir, &target).is_ok());
         }
         let _ = std::fs::remove_file(&link);
         let _ = std::fs::remove_file(&target);
@@ -1492,11 +1534,21 @@ mod tests {
             "greentic-operator-dev",
             // RUSTSEC-2026-0283 — unmaintained; use zeroize
             "clear_on_drop",
+            // RUSTSEC-2026-0284 — unsound Map::into_iter / SharedIncin::clear
+            "lockfree",
         ] {
             let needle = format!("name = \"{dropper}\"");
             assert!(
                 !lock.contains(&needle),
                 "Cargo.lock must not include dropper crate {dropper}"
+            );
+        }
+        // GHSA-2mjx-qc3c-rqvc: rustls 0.23.13–0.23.44 TLS 1.3 record alignment.
+        for patch in 13..=44 {
+            let stanza = format!("name = \"rustls\"\nversion = \"0.23.{patch}\"");
+            assert!(
+                !lock.contains(&stanza),
+                "Cargo.lock must not pin rustls 0.23.{patch} (GHSA-2mjx-qc3c-rqvc)"
             );
         }
     }
