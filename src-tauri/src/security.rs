@@ -1006,6 +1006,21 @@ fn reject_non_regular_file(path: &Path) -> Result<(), DbError> {
     Ok(())
 }
 
+/// Absolute paths for macOS system binaries we spawn. Bare names follow PATH
+/// (OpenTelemetry CVE-2026-81192 / CWE-426 untrusted search path).
+pub const MACOS_OPEN: &str = "/usr/bin/open";
+pub const MACOS_OSASCRIPT: &str = "/usr/bin/osascript";
+pub const MACOS_SWIFT: &str = "/usr/bin/swift";
+
+const MACOS_SAFE_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
+
+/// Spawn a known macOS system binary without searching `PATH`.
+pub fn macos_system_command(bin: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new(bin);
+    cmd.env("PATH", MACOS_SAFE_PATH);
+    cmd
+}
+
 /// argv after `open` for a single URL/path operand. `--` stops option parsing
 /// so a leading-dash operand cannot become `-a`/`-e` (HexStrike CVE-2026-90690
 /// additional_args / MikroTik CVE-2026-86060 argument-delimiter class).
@@ -1018,13 +1033,13 @@ pub fn open_app_args<'a>(flag: &'a str, app: &'a str) -> [&'a str; 3] {
 }
 
 pub fn open_operand_status(operand: &str) -> std::io::Result<std::process::ExitStatus> {
-    std::process::Command::new("open")
+    macos_system_command(MACOS_OPEN)
         .args(open_operand_args(operand))
         .status()
 }
 
 pub fn open_app_status(flag: &str, app: &str) -> std::io::Result<std::process::ExitStatus> {
-    std::process::Command::new("open")
+    macos_system_command(MACOS_OPEN)
         .args(open_app_args(flag, app))
         .status()
 }
@@ -1536,6 +1551,8 @@ mod tests {
             "clear_on_drop",
             // RUSTSEC-2026-0284 — unsound Map::into_iter / SharedIncin::clear
             "lockfree",
+            // CVE-2026-61544 / GHSA 2026-09-15 — remote panic in QUIC handshake
+            "libp2p-quic",
         ] {
             let needle = format!("name = \"{dropper}\"");
             assert!(
@@ -1543,13 +1560,30 @@ mod tests {
                 "Cargo.lock must not include dropper crate {dropper}"
             );
         }
-        // GHSA-2mjx-qc3c-rqvc: rustls 0.23.13–0.23.44 TLS 1.3 record alignment.
+        // RUSTSEC-2026-0285 / GHSA-2mjx-qc3c-rqvc: rustls 0.23.13–0.23.44
+        // TLS 1.3 handshake messages accepted across encryption-level boundaries.
         for patch in 13..=44 {
             let stanza = format!("name = \"rustls\"\nversion = \"0.23.{patch}\"");
             assert!(
                 !lock.contains(&stanza),
-                "Cargo.lock must not pin rustls 0.23.{patch} (GHSA-2mjx-qc3c-rqvc)"
+                "Cargo.lock must not pin rustls 0.23.{patch} (RUSTSEC-2026-0285)"
             );
         }
+    }
+
+    #[test]
+    fn macos_system_bins_are_absolute_and_not_path_looked_up() {
+        for bin in [MACOS_OPEN, MACOS_OSASCRIPT, MACOS_SWIFT] {
+            assert!(bin.starts_with("/usr/bin/"), "{bin} must be absolute");
+            assert!(!bin.contains(".."), "{bin} must not contain '..'");
+        }
+        let src = include_str!("security.rs");
+        assert!(src.contains("macos_system_command(MACOS_OPEN)"));
+        let mail = include_str!("commands/mail.rs");
+        let mailapp = include_str!("commands/email_mailapp.rs");
+        assert!(mail.contains("macos_system_command(MACOS_SWIFT)"));
+        assert!(!mail.contains(r#"Command::new("swift")"#));
+        assert!(mailapp.contains("macos_system_command(MACOS_OSASCRIPT)"));
+        assert!(!mailapp.contains(r#"Command::new("osascript")"#));
     }
 }
