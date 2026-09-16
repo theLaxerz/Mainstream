@@ -2,12 +2,11 @@ import AppKit
 import Foundation
 import Vision
 
-guard CommandLine.arguments.count > 1 else {
-    fputs("usage: ocr_image.swift <image-path>\n", stderr)
+let args = CommandLine.arguments.dropFirst().filter { $0 != "--" }
+guard let path = args.first else {
+    fputs("usage: ocr_image.swift [--] <image-path>\n", stderr)
     exit(2)
 }
-
-let path = CommandLine.arguments[1]
 let url = URL(fileURLWithPath: path)
 
 guard let image = NSImage(contentsOf: url),

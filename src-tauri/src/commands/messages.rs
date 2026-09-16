@@ -1,13 +1,13 @@
 //! Read-only access to macOS Messages `chat.db` (requires Full Disk Access).
 
 use crate::db::DbError;
+use crate::security::{open_app_status, open_operand_status, validate_imessage_ref};
 use chrono::{TimeZone, Utc};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const APPLE_EPOCH_UNIX: i64 = 978_307_200;
 
@@ -426,7 +426,7 @@ pub fn open_full_disk_access_settings() -> Result<(), DbError> {
 
     let mut last_err = None;
     for url in urls {
-        match Command::new("open").arg(url).status() {
+        match open_operand_status(url) {
             Ok(status) if status.success() => return Ok(()),
             Ok(status) => {
                 last_err = Some(format!("open exited with status {status}"));
@@ -470,6 +470,16 @@ pub fn open_message_conversation(
             "chat_identifier or chat_guid is required".into(),
         ));
     }
+    let identifier = if identifier.is_empty() {
+        String::new()
+    } else {
+        validate_imessage_ref(identifier)?
+    };
+    let guid = match guid {
+        Some(g) => Some(validate_imessage_ref(g)?),
+        None => None,
+    };
+    let guid = guid.as_deref();
 
     // 1:1 chats: imessage://address works reliably.
     // Group chats: try guid-based URL, then fall back to identifier.
@@ -479,11 +489,17 @@ pub fn open_message_conversation(
             v.push(format!("imessage://{}", encode_imessage_target(g)));
         }
         if !identifier.is_empty() {
-            v.push(format!("imessage://{}", encode_imessage_target(identifier)));
+            v.push(format!(
+                "imessage://{}",
+                encode_imessage_target(&identifier)
+            ));
         }
         v
     } else {
-        let mut v = vec![format!("imessage://{}", encode_imessage_target(identifier))];
+        let mut v = vec![format!(
+            "imessage://{}",
+            encode_imessage_target(&identifier)
+        )];
         if let Some(g) = guid {
             v.push(format!("imessage://{}", encode_imessage_target(g)));
         }
@@ -491,7 +507,7 @@ pub fn open_message_conversation(
     };
 
     for url in &candidates {
-        if let Ok(status) = Command::new("open").arg(url).status() {
+        if let Ok(status) = open_operand_status(url) {
             if status.success() {
                 return Ok(());
             }
@@ -499,9 +515,7 @@ pub fn open_message_conversation(
     }
 
     // Last resort: bring Messages.app forward.
-    let status = Command::new("open")
-        .args(["-a", "Messages"])
-        .status()
+    let status = open_app_status("-a", "Messages")
         .map_err(|e| DbError::Message(format!("failed to open Messages: {e}")))?;
 
     if status.success() {
