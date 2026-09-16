@@ -10,12 +10,12 @@ use crate::commands::email::{
     SETTING_PORT, SETTING_PROVIDER, SETTING_USER,
 };
 use crate::db::{set_setting, DbError, DbState};
-use crate::security::validate_mailapp_account_name;
+use crate::security::{macos_system_command, validate_mailapp_account_name, MACOS_OSASCRIPT};
 use rusqlite::Connection;
 use serde::Serialize;
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
@@ -223,7 +223,7 @@ fn run_osascript(source: &str) -> Result<String, DbError> {
 
 fn run_osascript_timed(source: &str, timeout: Duration) -> Result<String, DbError> {
     let wrapped = wrap_with_timeout(source, timeout);
-    let mut child = Command::new("osascript")
+    let mut child = macos_system_command(MACOS_OSASCRIPT)
         .arg("-e")
         .arg(&wrapped)
         .stdout(Stdio::piped())

@@ -6,8 +6,9 @@ use crate::commands::email::{
 };
 use crate::db::{now_iso, DbError, DbState};
 use crate::security::{
-    confined_dest, confirm_confined_write, ensure_public_resolved_host, max_http_response_bytes,
-    parse_public_https_url, path_is_within, public_http_client,
+    confined_dest, confirm_confined_write, ensure_public_resolved_host, macos_system_command,
+    max_http_response_bytes, parse_public_https_url, path_is_within, public_http_client,
+    MACOS_SWIFT,
 };
 use mailparse::MailHeaderMap;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -15,7 +16,6 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use tauri::State;
 
 #[derive(Debug, Clone, Serialize)]
@@ -249,7 +249,7 @@ fn run_vision_ocr(image_path: &Path, cache_dir: &Path) -> Option<String> {
     if !script.exists() {
         return None;
     }
-    let output = Command::new("swift")
+    let output = macos_system_command(MACOS_SWIFT)
         .arg(&script)
         .arg("--")
         .arg(image_path)
