@@ -22,6 +22,10 @@ url = "2"
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+# RUSTSEC-2026-0285 / GHSA-2mjx-qc3c-rqvc: rustls 0.23.13–0.23.44 accepted
+# TLS 1.3 handshake messages at the wrong encryption level in the same record.
+# default-features = false so we do not enable aws-lc-rs on top of reqwest's ring.
+rustls = { version = "0.23.45", default-features = false }
 feed-rs = "2"
 csv = "1"
 imap = "2.4"
@@ -30,7 +34,10 @@ mailparse = "0.15"
 keyring = { version = "3", features = ["apple-native"] }
 urlencoding = "2"
 base64 = "0.22"
-quick-xml = "0.37"
-zip = "2.2"
+quick-xml = "0.41"
+zip = "2.4"
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
+# 1.9.0 requires edition 2024 / rustc 1.85. Stay on 1.8.x so `cargo test --locked`
+# works on the 1.83 toolchain and we do not pick up an unneeded MSRV jump.
+zeroize = "=1.8.2"
