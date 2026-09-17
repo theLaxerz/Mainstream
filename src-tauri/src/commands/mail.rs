@@ -6,9 +6,9 @@ use crate::commands::email::{
 };
 use crate::db::{now_iso, DbError, DbState};
 use crate::security::{
-    confined_dest, confirm_confined_write, ensure_public_resolved_host, macos_system_command,
-    max_http_response_bytes, parse_public_https_url, path_is_within, public_http_client,
-    MACOS_SWIFT,
+    confined_dest, confirm_confined_write, ensure_public_resolved_host, is_inline_image_data_url,
+    macos_system_command, max_http_response_bytes, parse_public_https_url, path_is_within,
+    public_http_client, MACOS_SWIFT,
 };
 use mailparse::MailHeaderMap;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -167,8 +167,11 @@ fn is_mail_scan_image(src: &str, alt: &str) -> bool {
     let src_l = src.to_ascii_lowercase();
     let alt_l = alt.to_ascii_lowercase();
 
-    if src_l.starts_with("data:") && src_l.contains("image/") {
+    if is_inline_image_data_url(src) {
         return alt_l.len() > 3;
+    }
+    if src_l.starts_with("data:") {
+        return false;
     }
 
     if src_l.contains("tracking") || src_l.contains("pixel") || src_l.contains("beacon") {
@@ -230,7 +233,7 @@ fn resolve_image_bytes(src: &str, inline: &HashMap<String, Vec<u8>>) -> Option<V
             .trim_matches(|c| c == '<' || c == '>');
         return inline.get(key).cloned();
     }
-    if src.starts_with("data:image/") {
+    if is_inline_image_data_url(src) {
         let comma = src.find(',')?;
         return base64_decode(&src[comma + 1..]);
     }
@@ -734,4 +737,26 @@ pub fn physical_mail_image_base64(
     use base64::Engine;
     let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
     Ok(Some(format!("data:{mime};base64,{b64}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mail_scan_rejects_html_data_urls_that_mention_image() {
+        assert!(is_mail_scan_image(
+            "data:image/jpeg;base64,/9j/4AAQ",
+            "scan"
+        ));
+        assert!(!is_mail_scan_image(
+            "data:text/html,<svg>image/jpeg</svg>",
+            "scan"
+        ));
+        assert!(resolve_image_bytes("data:text/html,image/png", &HashMap::new()).is_none());
+        assert!(parse_img_tags(
+            r#"<img src="data:text/html,<h1>image/png</h1>" alt="scan">"#
+        )
+        .is_empty());
+    }
 }

@@ -582,6 +582,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_callback_ignores_form_posted_oauth_callback() {
+        // Jenkins Bitbucket CVE-2026-92138: authorization endpoints that read
+        // `oauth_callback` from a submitted form instead of the stored request
+        // token let an attacker swap the redirect. We only parse GET query.
+        let req = concat!(
+            "POST / HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n",
+            "code=stolen&state=xyz&oauth_callback=https://evil.example/steal"
+        );
+        assert!(parse_http_callback(req).is_err());
+    }
+
+    #[test]
+    fn oauth_token_endpoints_are_pinned_issuers() {
+        // rmcp CVE-2026-63127: do not discover token URLs from untrusted
+        // protected-resource metadata. These constants are the only issuers.
+        assert!(GOOGLE_AUTH.starts_with("https://accounts.google.com/"));
+        assert!(GOOGLE_TOKEN.starts_with("https://oauth2.googleapis.com/"));
+        assert!(MICROSOFT_AUTH.starts_with("https://login.microsoftonline.com/"));
+        assert!(MICROSOFT_TOKEN.starts_with("https://login.microsoftonline.com/"));
+    }
+
+    #[test]
     fn email_from_id_token_reads_payload() {
         let payload = URL_SAFE_NO_PAD
             .encode(br#"{"email":"ada@outlook.com","preferred_username":"ada@outlook.com"}"#);

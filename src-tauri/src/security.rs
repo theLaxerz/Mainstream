@@ -577,6 +577,22 @@ fn nested_dangerous_scheme(s: &str) -> bool {
         || lower.contains("data:application/")
 }
 
+/// True when `src` is a `data:` URL whose media type is an image.
+///
+/// `@nuxtjs/mdc` [CVE-2026-63671](https://github.com/advisories/GHSA-mxm6-v9r6-r94c)
+/// compared `data:text/html` against `url.protocol` (`"data:"`), so the MIME
+/// deny-list never matched. Require the type between `data:` and the first
+/// `;` or `,` to be `image/<subtype>` — not a substring `image/` later in the
+/// payload.
+pub fn is_inline_image_data_url(src: &str) -> bool {
+    let lower = src.trim().to_ascii_lowercase();
+    let Some(rest) = lower.strip_prefix("data:") else {
+        return false;
+    };
+    let media = rest.split([';', ',']).next().unwrap_or("");
+    media.starts_with("image/") && media.len() > "image/".len()
+}
+
 pub fn validate_app_target(raw: &str) -> Result<String, DbError> {
     let raw = raw.trim();
     if raw.is_empty() || raw.len() > 1024 {
@@ -1553,6 +1569,8 @@ mod tests {
             "lockfree",
             // CVE-2026-61544 / GHSA 2026-09-15 — remote panic in QUIC handshake
             "libp2p-quic",
+            // RUSTSEC-2026-0286 — OOB read decoding CKA_ALLOWED_MECHANISMS
+            "cryptoki",
         ] {
             let needle = format!("name = \"{dropper}\"");
             assert!(
@@ -1585,5 +1603,17 @@ mod tests {
         assert!(!mail.contains(r#"Command::new("swift")"#));
         assert!(mailapp.contains("macos_system_command(MACOS_OSASCRIPT)"));
         assert!(!mailapp.contains(r#"Command::new("osascript")"#));
+    }
+
+    #[test]
+    fn inline_image_data_url_requires_image_media_type() {
+        assert!(is_inline_image_data_url("data:image/jpeg;base64,/9j/4AAQ"));
+        assert!(is_inline_image_data_url("DATA:IMAGE/PNG,iVBORw0K"));
+        assert!(!is_inline_image_data_url(
+            "data:text/html,<img src=x>image/jpeg"
+        ));
+        assert!(!is_inline_image_data_url("data:text/html;base64,image/png"));
+        assert!(!is_inline_image_data_url("data:image"));
+        assert!(!is_inline_image_data_url("https://example.com/a.jpg"));
     }
 }
