@@ -12,6 +12,7 @@ use crate::commands::email::{
 };
 use crate::commands::open::open_with_system;
 use crate::db::{get_setting, set_setting, DbError, DbState};
+use crate::security::{authenticated_http_client, validate_oauth_client_id, validate_oauth_token};
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use imap::Authenticator;
@@ -31,7 +32,8 @@ const CALLBACK_TIMEOUT: Duration = Duration::from_secs(180);
 const GOOGLE_AUTH: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN: &str = "https://oauth2.googleapis.com/token";
 const GOOGLE_USERINFO: &str = "https://www.googleapis.com/oauth2/v3/userinfo";
-const GOOGLE_SCOPE: &str = "https://mail.google.com/ https://www.googleapis.com/auth/userinfo.email openid";
+const GOOGLE_SCOPE: &str =
+    "https://mail.google.com/ https://www.googleapis.com/auth/userinfo.email openid";
 const MICROSOFT_AUTH: &str = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize";
 const MICROSOFT_TOKEN: &str = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
 const MICROSOFT_SCOPE: &str =
@@ -161,17 +163,85 @@ fn url_decode(input: &str) -> String {
         .unwrap_or_else(|_| input.replace('+', " "))
 }
 
-pub fn email_from_id_token(id_token: &str) -> Option<String> {
-    let payload = id_token.split('.').nth(1)?;
-    let padded = match payload.len() % 4 {
-        0 => payload.to_string(),
-        n => format!("{payload}{}", "=".repeat(4 - n)),
+fn jwt_part_json(part: &str) -> Option<serde_json::Value> {
+    if part.is_empty() {
+        return None;
+    }
+    let padded = match part.len() % 4 {
+        0 => part.to_string(),
+        n => format!("{part}{}", "=".repeat(4 - n)),
     };
     let decoded = URL_SAFE_NO_PAD
-        .decode(payload)
+        .decode(part)
         .or_else(|_| STANDARD.decode(padded.as_bytes()))
         .ok()?;
-    let value: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+    serde_json::from_slice(&decoded).ok()
+}
+
+fn id_token_alg_is_signed(alg: &str) -> bool {
+    matches!(
+        alg,
+        "RS256" | "RS384" | "RS512" | "ES256" | "ES384" | "ES512" | "PS256" | "PS384" | "PS512"
+    )
+}
+
+fn id_token_iss_is_pinned(iss: &str) -> bool {
+    let iss = iss.trim().to_ascii_lowercase();
+    iss == "https://accounts.google.com"
+        || iss.starts_with("https://accounts.google.com/")
+        || iss.starts_with("https://login.microsoftonline.com/")
+        || iss.starts_with("https://sts.windows.net/")
+}
+
+fn id_token_aud_value_is_safe(s: &str) -> bool {
+    let s = s.trim();
+    !s.is_empty()
+        && s != "*"
+        && !s.contains("://")
+        && !s.contains([' ', '\n', '\r', '\t'])
+        && s.len() <= 256
+}
+
+/// Keycloak [CVE-2026-93999](https://nvd.nist.gov/vuln/detail/CVE-2026-93999)
+/// restored extra audiences on refresh; Obot GHSA-xwmw-prc4-v3cr confused a
+/// resource-server audience. Google/Microsoft client IDs are not URLs.
+fn id_token_aud_is_safe(value: &serde_json::Value) -> bool {
+    match value.get("aud") {
+        Some(serde_json::Value::String(s)) => id_token_aud_value_is_safe(s),
+        Some(serde_json::Value::Array(arr)) if !arr.is_empty() => arr
+            .iter()
+            .all(|v| v.as_str().map(id_token_aud_value_is_safe).unwrap_or(false)),
+        _ => false,
+    }
+}
+
+/// Read the email claim from a compact JWT **after** rejecting unsigned
+/// tokens. Mnemosyne [CVE-2026-59163](https://github.com/advisories/GHSA-xcw4-53cc-hv32)
+/// decoded the payload and skipped HMAC verification, so `alg: none` and
+/// two-segment tokens impersonated any user. We still trust TLS + pinned
+/// token hosts rather than JWKS, but refuse unsigned / unpinned issuers
+/// and tokens whose `aud` is missing, `*`, or a URL.
+pub fn email_from_id_token(id_token: &str) -> Option<String> {
+    let mut parts = id_token.split('.');
+    let header = parts.next()?;
+    let payload = parts.next()?;
+    let signature = parts.next()?;
+    if parts.next().is_some() || signature.is_empty() {
+        return None;
+    }
+    let header_json = jwt_part_json(header)?;
+    let alg = header_json.get("alg")?.as_str()?;
+    if !id_token_alg_is_signed(alg) {
+        return None;
+    }
+    let value = jwt_part_json(payload)?;
+    let iss = value.get("iss")?.as_str()?;
+    if !id_token_iss_is_pinned(iss) {
+        return None;
+    }
+    if !id_token_aud_is_safe(&value) {
+        return None;
+    }
     ["email", "preferred_username", "upn"]
         .iter()
         .find_map(|key| {
@@ -185,10 +255,7 @@ pub fn email_from_id_token(id_token: &str) -> Option<String> {
 }
 
 fn http_client() -> Result<reqwest::blocking::Client, DbError> {
-    reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|e| DbError::Message(format!("http client: {e}")))
+    authenticated_http_client(20, Some("MainstreamLifeOS/0.1 (+local; OAuth)"))
 }
 
 fn wait_for_callback(listener: &TcpListener, expected_state: &str) -> Result<String, DbError> {
@@ -204,7 +271,8 @@ fn wait_for_callback(listener: &TcpListener, expected_state: &str) -> Result<Str
                 let request = String::from_utf8_lossy(&buf[..n]);
                 let params = parse_http_callback(&request).unwrap_or_default();
                 if params.is_empty() {
-                    let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
+                    let _ =
+                        stream.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
                     continue;
                 }
                 let body = if params.get("state").map(String::as_str) == Some(expected_state)
@@ -276,23 +344,31 @@ p{{margin:0;color:#3d5a63;line-height:1.45}}
     )
 }
 
-fn resolve_client_id(conn: &Connection, provider: &str, override_id: Option<&str>) -> Result<String, DbError> {
+fn resolve_client_id(
+    conn: &Connection,
+    provider: &str,
+    override_id: Option<&str>,
+) -> Result<String, DbError> {
     if let Some(id) = override_id.map(str::trim).filter(|s| !s.is_empty()) {
+        let id = validate_oauth_client_id(id)?;
         let key = if provider == "google" {
             SETTING_GOOGLE_CLIENT_ID
         } else {
             SETTING_MICROSOFT_CLIENT_ID
         };
-        set_setting(conn, key, id)?;
-        return Ok(id.to_string());
+        set_setting(conn, key, &id)?;
+        return Ok(id);
     }
     let key = if provider == "google" {
         SETTING_GOOGLE_CLIENT_ID
     } else {
         SETTING_MICROSOFT_CLIENT_ID
     };
-    if let Some(id) = get_setting(conn, key)?.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
-        return Ok(id);
+    if let Some(id) = get_setting(conn, key)?
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
+        return validate_oauth_client_id(&id);
     }
     let env_key = if provider == "google" {
         "MAINSTREAM_GOOGLE_CLIENT_ID"
@@ -302,6 +378,7 @@ fn resolve_client_id(conn: &Connection, provider: &str, override_id: Option<&str
     if let Ok(id) = std::env::var(env_key) {
         let id = id.trim().to_string();
         if !id.is_empty() {
+            let id = validate_oauth_client_id(&id)?;
             set_setting(conn, key, &id)?;
             return Ok(id);
         }
@@ -331,11 +408,7 @@ fn authorize_url(
             "&access_type=offline&prompt=select_account%20consent",
         )
     } else {
-        (
-            MICROSOFT_AUTH,
-            MICROSOFT_SCOPE,
-            "&prompt=select_account",
-        )
+        (MICROSOFT_AUTH, MICROSOFT_SCOPE, "&prompt=select_account")
     };
     format!(
         "{auth}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}&code_challenge={}&code_challenge_method=S256{extra}",
@@ -388,7 +461,9 @@ fn exchange_tokens(
         .map_err(|e| DbError::Message(format!("token response: {e}")))?;
     if let Some(err) = resp.error {
         let desc = resp.error_description.unwrap_or_default();
-        return Err(DbError::Message(format!("OAuth token error: {err} {desc}").trim().into()));
+        return Err(DbError::Message(
+            format!("OAuth token error: {err} {desc}").trim().into(),
+        ));
     }
     let access = resp
         .access_token
@@ -401,7 +476,11 @@ fn exchange_tokens(
     Ok((tokens, resp.id_token))
 }
 
-fn refresh_tokens(provider: &str, client_id: &str, refresh_token: &str) -> Result<OAuthTokens, DbError> {
+fn refresh_tokens(
+    provider: &str,
+    client_id: &str,
+    refresh_token: &str,
+) -> Result<OAuthTokens, DbError> {
     let endpoint = if provider == "google" {
         GOOGLE_TOKEN
     } else {
@@ -425,7 +504,9 @@ fn refresh_tokens(provider: &str, client_id: &str, refresh_token: &str) -> Resul
     if let Some(err) = resp.error {
         let desc = resp.error_description.unwrap_or_default();
         return Err(DbError::Message(
-            format!("Reconnect {provider} in Email settings ({err} {desc})").trim().into(),
+            format!("Reconnect {provider} in Email settings ({err} {desc})")
+                .trim()
+                .into(),
         ));
     }
     let access = resp
@@ -442,7 +523,9 @@ fn refresh_tokens(provider: &str, client_id: &str, refresh_token: &str) -> Resul
 }
 
 fn lookup_google_email(access_token: &str) -> Option<String> {
-    let resp = http_client().ok()?.get(GOOGLE_USERINFO)
+    let resp = http_client()
+        .ok()?
+        .get(GOOGLE_USERINFO)
         .bearer_auth(access_token)
         .send()
         .ok()?;
@@ -461,17 +544,18 @@ pub fn ensure_access_token(conn: &Connection, provider: &str) -> Result<String, 
         ))
     })?;
     if tokens.expires_at > now_unix() && !tokens.access_token.is_empty() {
-        return Ok(tokens.access_token);
+        return validate_oauth_token(&tokens.access_token);
     }
     let refresh = tokens.refresh_token.clone().ok_or_else(|| {
         DbError::Message(format!(
             "{provider} session expired. Continue with {provider} in Email settings."
         ))
     })?;
+    let refresh = validate_oauth_token(&refresh)?;
     let client_id = resolve_client_id(conn, provider, None)?;
     tokens = refresh_tokens(provider, &client_id, &refresh)?;
     store_tokens(provider, &tokens)?;
-    Ok(tokens.access_token)
+    validate_oauth_token(&tokens.access_token)
 }
 
 fn normalize_provider(raw: &str) -> Result<&'static str, DbError> {
@@ -509,9 +593,7 @@ pub fn start_email_oauth(
 
     let code = wait_for_callback(&listener, &state_token)?;
     let (tokens, id_token) = exchange_tokens(provider, &client_id, &redirect, &code, &verifier)?;
-    let mut email = id_token
-        .as_deref()
-        .and_then(email_from_id_token);
+    let mut email = id_token.as_deref().and_then(email_from_id_token);
     if email.is_none() && provider == "google" {
         email = lookup_google_email(&tokens.access_token);
     }
@@ -568,14 +650,92 @@ mod tests {
     }
 
     #[test]
-    fn email_from_id_token_reads_payload() {
-        let payload = URL_SAFE_NO_PAD.encode(
-            br#"{"email":"ada@outlook.com","preferred_username":"ada@outlook.com"}"#,
+    fn parse_callback_ignores_form_posted_oauth_callback() {
+        // Jenkins Bitbucket CVE-2026-92138: authorization endpoints that read
+        // `oauth_callback` from a submitted form instead of the stored request
+        // token let an attacker swap the redirect. We only parse GET query.
+        let req = concat!(
+            "POST / HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n",
+            "code=stolen&state=xyz&oauth_callback=https://evil.example/steal"
         );
-        let token = format!("aaa.{payload}.sig");
+        assert!(parse_http_callback(req).is_err());
+    }
+
+    #[test]
+    fn oauth_token_endpoints_are_pinned_issuers() {
+        // rmcp CVE-2026-63127: do not discover token URLs from untrusted
+        // protected-resource metadata. These constants are the only issuers.
+        assert!(GOOGLE_AUTH.starts_with("https://accounts.google.com/"));
+        assert!(GOOGLE_TOKEN.starts_with("https://oauth2.googleapis.com/"));
+        assert!(MICROSOFT_AUTH.starts_with("https://login.microsoftonline.com/"));
+        assert!(MICROSOFT_TOKEN.starts_with("https://login.microsoftonline.com/"));
+    }
+
+    fn compact_jwt(header: &str, payload: &str, signature: &str) -> String {
+        format!(
+            "{}.{}.{signature}",
+            URL_SAFE_NO_PAD.encode(header.as_bytes()),
+            URL_SAFE_NO_PAD.encode(payload.as_bytes())
+        )
+    }
+
+    #[test]
+    fn email_from_id_token_reads_payload() {
+        let token = compact_jwt(
+            r#"{"alg":"RS256","typ":"JWT"}"#,
+            r#"{"iss":"https://login.microsoftonline.com/{tid}/v2.0","aud":"00000000-0000-0000-0000-000000000000","email":"ada@outlook.com","preferred_username":"ada@outlook.com"}"#,
+            "sig",
+        );
         assert_eq!(
             email_from_id_token(&token).as_deref(),
             Some("ada@outlook.com")
         );
+    }
+
+    #[test]
+    fn email_from_id_token_rejects_unsigned_and_unpinned() {
+        // Mnemosyne CVE-2026-59163: alg:none / missing signature / wrong iss.
+        let payload = r#"{"iss":"https://accounts.google.com","aud":"481706.apps.googleusercontent.com","email":"ada@gmail.com"}"#;
+        assert!(email_from_id_token(&compact_jwt(r#"{"alg":"none"}"#, payload, "x")).is_none());
+        assert!(email_from_id_token(&compact_jwt(r#"{"alg":"RS256"}"#, payload, "")).is_none());
+        let two_part = format!(
+            "{}.{}",
+            URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256"}"#),
+            URL_SAFE_NO_PAD.encode(payload.as_bytes())
+        );
+        assert!(email_from_id_token(&two_part).is_none());
+        assert!(email_from_id_token(&compact_jwt(
+            r#"{"alg":"RS256"}"#,
+            r#"{"iss":"https://evil.example","aud":"481706.apps.googleusercontent.com","email":"ada@gmail.com"}"#,
+            "sig"
+        ))
+        .is_none());
+        // Keycloak CVE-2026-93999 / Obot audience-confusion class.
+        assert!(email_from_id_token(&compact_jwt(
+            r#"{"alg":"RS256"}"#,
+            r#"{"iss":"https://accounts.google.com","email":"ada@gmail.com"}"#,
+            "sig"
+        ))
+        .is_none());
+        assert!(email_from_id_token(&compact_jwt(
+            r#"{"alg":"RS256"}"#,
+            r#"{"iss":"https://accounts.google.com","aud":"*","email":"ada@gmail.com"}"#,
+            "sig"
+        ))
+        .is_none());
+        assert!(email_from_id_token(&compact_jwt(
+            r#"{"alg":"RS256"}"#,
+            r#"{"iss":"https://accounts.google.com","aud":"https://evil.example","email":"ada@gmail.com"}"#,
+            "sig"
+        ))
+        .is_none());
+    }
+
+    #[test]
+    fn parse_callback_ignores_delete_oauth_callback() {
+        // zot CVE-2026-61833: bearer auth mapped every non-GET/HEAD method
+        // to a write scope. The loopback listener only parses GET query.
+        let req = "DELETE /?code=stolen&state=xyz HTTP/1.1\r\n\r\n";
+        assert!(parse_http_callback(req).is_err());
     }
 }

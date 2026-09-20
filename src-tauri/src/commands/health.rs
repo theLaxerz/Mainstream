@@ -1,14 +1,18 @@
 //! Apple Health `export.xml` import (local file / zip).
 
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
-use crate::security::{max_health_export_bytes, validate_health_export_path};
+use crate::security::{
+    deny, max_health_export_bytes, reject_symlink_path, validate_health_export_path,
+    xml_payload_forbids_dtd, zip_entry_index_is_safe, zip_entry_is_apple_health_export,
+    zip_entry_name_is_confined, zip_member_is_regular_file, zip_member_size_is_safe,
+};
 use chrono::{DateTime, Local, NaiveDate};
 use quick_xml::events::Event;
-use quick_xml::Reader;
+use quick_xml::{Reader, XmlVersion};
 use rusqlite::params;
 use serde::Serialize;
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use tauri::State;
 use zip::ZipArchive;
@@ -60,12 +64,24 @@ fn ingest_export_xml<R: Read>(
     reader: R,
     aggs: &mut std::collections::HashMap<NaiveDate, DayAgg>,
 ) -> Result<(), DbError> {
-    let mut xml = Reader::from_reader(BufReader::new(reader));
+    let mut buffered = BufReader::new(reader);
+    {
+        let head = buffered.fill_buf().map_err(DbError::Io)?;
+        if !xml_payload_forbids_dtd(head) {
+            return Err(deny(
+                "Health XML must not contain a DTD or a non-UTF-8 encoding",
+            ));
+        }
+    }
+    let mut xml = Reader::from_reader(buffered);
     xml.config_mut().trim_text(true);
     let mut buf = Vec::new();
 
     loop {
         match xml.read_event_into(&mut buf) {
+            Ok(Event::DocType(_)) => {
+                return Err(deny("Health XML must not contain a DTD"));
+            }
             Ok(Event::Empty(e)) | Ok(Event::Start(e)) => {
                 if e.name().as_ref() != b"Record" {
                     buf.clear();
@@ -77,7 +93,14 @@ fn ingest_export_xml<R: Read>(
                 let mut end_date = String::new();
                 for attr in e.attributes().flatten() {
                     let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
-                    let val = attr.unescape_value().unwrap_or_default().to_string();
+                    // `unescape_value` is cfg'd off when any crate enables
+                    // quick-xml's `encoding` feature (feed-rs does). The decoder
+                    // path works either way (RUSTSEC-2026-0194 still uses
+                    // `attributes()` with the default duplicate-name check).
+                    let val = attr
+                        .decoded_and_normalized_value(XmlVersion::Implicit1_0, xml.decoder())
+                        .unwrap_or_default()
+                        .into_owned();
                     match key.as_str() {
                         "type" => record_type = val,
                         "value" => value = val,
@@ -121,6 +144,7 @@ fn ingest_export_xml<R: Read>(
 
 fn open_export_reader(path: &Path) -> Result<Box<dyn Read>, DbError> {
     validate_health_export_path(&path.to_string_lossy())?;
+    reject_symlink_path(path)?;
     let meta = std::fs::metadata(path).map_err(DbError::Io)?;
     if meta.len() > max_health_export_bytes() {
         return Err(DbError::Message(
@@ -136,30 +160,43 @@ fn open_export_reader(path: &Path) -> Result<Box<dyn Read>, DbError> {
         let file = File::open(path).map_err(DbError::Io)?;
         let mut archive =
             ZipArchive::new(file).map_err(|e| DbError::Message(format!("zip: {e}")))?;
-        for i in 0..archive.len() {
+        let len = archive.len();
+        for i in 0..len {
+            if !zip_entry_index_is_safe(i, len) {
+                break;
+            }
             let mut file = archive
                 .by_index(i)
                 .map_err(|e| DbError::Message(format!("zip entry: {e}")))?;
-            let name = file.name().to_ascii_lowercase();
-            if name.contains("..") {
+            // Raw header first: GitLab CVE-2026-85706 / Mockoon CVE-2026-59149
+            // confinement missed encoded `file.Path` and prefix-only bases.
+            if !zip_entry_name_is_confined(file.name())
+                || !zip_member_is_regular_file(file.is_symlink(), file.unix_mode())
+            {
                 continue;
             }
-            if name.ends_with("export.xml") || name.ends_with("apple_health_export/export.xml") {
-                if file.size() > max_health_export_bytes() {
-                    return Err(DbError::Message(
-                        "Health export.xml inside zip is too large".into(),
-                    ));
-                }
-                let mut limited = (&mut file).take(max_health_export_bytes());
-                let mut buf = Vec::new();
-                limited.read_to_end(&mut buf).map_err(DbError::Io)?;
-                if buf.len() as u64 >= max_health_export_bytes() {
-                    return Err(DbError::Message(
-                        "Health export.xml inside zip is too large".into(),
-                    ));
-                }
-                return Ok(Box::new(std::io::Cursor::new(buf)));
+            // `enclosed_name` rejects zip-slip (`../`, absolute paths). We only
+            // read export.xml into memory, but still skip hostile entries.
+            let Some(enclosed) = file.enclosed_name() else {
+                continue;
+            };
+            if !zip_entry_is_apple_health_export(&enclosed) {
+                continue;
             }
+            if !zip_member_size_is_safe(file.size(), file.compressed_size()) {
+                return Err(DbError::Message(
+                    "Health export.xml inside zip is too large".into(),
+                ));
+            }
+            let mut limited = (&mut file).take(max_health_export_bytes());
+            let mut buf = Vec::new();
+            limited.read_to_end(&mut buf).map_err(DbError::Io)?;
+            if buf.len() as u64 >= max_health_export_bytes() {
+                return Err(DbError::Message(
+                    "Health export.xml inside zip is too large".into(),
+                ));
+            }
+            return Ok(Box::new(std::io::Cursor::new(buf)));
         }
         return Err(DbError::Message(
             "Zip does not contain export.xml (Apple Health export)".into(),
@@ -315,5 +352,28 @@ pub fn health_today_summary(state: State<'_, DbState>) -> Result<Option<HealthDa
         }))
     } else {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ingest_rejects_xxe_doctype() {
+        let xml = br#"<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><HealthData><Record type="HKQuantityTypeIdentifierStepCount" value="10" startDate="2026-09-20 00:00:00 +0000" endDate="2026-09-20 00:00:00 +0000"/></HealthData>"#;
+        let mut aggs = std::collections::HashMap::new();
+        assert!(ingest_export_xml(&xml[..], &mut aggs).is_err());
+        assert!(aggs.is_empty());
+    }
+
+    #[test]
+    fn ingest_accepts_step_records() {
+        let xml = br#"<?xml version="1.0"?><HealthData><Record type="HKQuantityTypeIdentifierStepCount" value="10" startDate="2026-09-20 00:00:00 +0000" endDate="2026-09-20 00:00:00 +0000"/></HealthData>"#;
+        let mut aggs = std::collections::HashMap::new();
+        ingest_export_xml(&xml[..], &mut aggs).expect("valid export");
+        assert_eq!(aggs.len(), 1);
+        let day = aggs.values().next().expect("day");
+        assert_eq!(day.steps, 10.0);
     }
 }
