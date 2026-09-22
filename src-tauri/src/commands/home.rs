@@ -2,6 +2,7 @@
 
 use crate::commands::blink::{self, blink_is_connected};
 use crate::db::{get_setting, set_setting, DbError, DbState};
+use crate::security::{authenticated_http_client, copy_http_json};
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -58,10 +59,7 @@ fn load_ring_token() -> Result<Option<String>, DbError> {
 }
 
 fn http_client() -> Result<reqwest::blocking::Client, DbError> {
-    reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(25))
-        .build()
-        .map_err(|e| DbError::Message(format!("http: {e}")))
+    authenticated_http_client(25, None)
 }
 
 fn ring_access_token(refresh_token: &str) -> Result<String, DbError> {
@@ -76,9 +74,7 @@ fn ring_access_token(refresh_token: &str) -> Result<String, DbError> {
         .send()
         .map_err(|e| DbError::Message(format!("ring oauth: {e}")))?;
     let status = resp.status();
-    let body: Value = resp
-        .json()
-        .map_err(|e| DbError::Message(format!("ring oauth json: {e}")))?;
+    let body: Value = copy_http_json(resp)?;
     if !status.is_success() {
         return Err(DbError::Message(format!("Ring auth failed ({status})")));
     }
@@ -97,9 +93,7 @@ fn fetch_ring_devices(refresh_token: &str) -> Result<Vec<HomeDevice>, DbError> {
         .send()
         .map_err(|e| DbError::Message(format!("ring devices: {e}")))?;
     let status = resp.status();
-    let body: Value = resp
-        .json()
-        .map_err(|e| DbError::Message(format!("ring devices json: {e}")))?;
+    let body: Value = copy_http_json(resp)?;
     if !status.is_success() {
         return Err(DbError::Message(format!("Ring devices failed ({status})")));
     }

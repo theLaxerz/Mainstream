@@ -7,10 +7,17 @@
 
 use crate::commands::home::HomeDevice;
 use crate::db::{get_setting, set_setting, DbError, DbState};
+use crate::security::{
+    authenticated_http_client, confined_dest, confirm_confined_write, copy_http_body,
+    copy_http_json, copy_http_text, ensure_public_resolved_host, parse_public_https_url,
+    path_is_within, validate_cache_file_stem, validate_dns_label,
+};
 use base64::Engine;
 use keyring::Entry;
 use reqwest::blocking::Client;
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, COOKIE, SET_COOKIE, USER_AGENT};
+use reqwest::header::{
+    HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, COOKIE, SET_COOKIE, USER_AGENT,
+};
 use reqwest::redirect::Policy;
 use rusqlite::Connection;
 use serde::Serialize;
@@ -93,7 +100,9 @@ fn store_set_cookie(cookies: &mut HashMap<String, String>, headers: &HeaderMap) 
     for val in headers.get_all(SET_COOKIE) {
         let Ok(raw) = val.to_str() else { continue };
         let pair = raw.split(';').next().unwrap_or("").trim();
-        let Some((name, value)) = pair.split_once('=') else { continue };
+        let Some((name, value)) = pair.split_once('=') else {
+            continue;
+        };
         let name = name.trim();
         if !name.is_empty() {
             cookies.insert(name.to_string(), value.trim().to_string());
@@ -117,10 +126,9 @@ fn with_cookies(
 }
 
 fn rest_client() -> Result<Client, DbError> {
-    Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|e| DbError::Message(format!("http client: {e}")))
+    // Thumbnails and region endpoints carry Bearer tokens — stay on origin
+    // (CVE-2026-88013 class) and still reject private redirect targets.
+    authenticated_http_client(30, None)
 }
 
 fn pkce_pair() -> (String, String) {
@@ -214,7 +222,10 @@ fn start_oauth_session(
     let authorize = client
         .get(OAUTH_AUTHORIZE)
         .header(USER_AGENT, OAUTH_UA)
-        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .header(
+            "Accept",
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        )
         .query(&[
             ("app_brand", "blink"),
             ("app_version", "50.1"),
@@ -243,14 +254,16 @@ fn start_oauth_session(
         client
             .get(OAUTH_SIGNIN)
             .header(USER_AGENT, OAUTH_UA)
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
+            .header(
+                "Accept",
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            ),
         &cookies,
     )
     .send()
     .map_err(|e| DbError::Message(format!("Blink sign-in page: {e}")))?;
     store_set_cookie(&mut cookies, signin.headers());
-    let html = signin
-        .text()
+    let html = copy_http_text(signin)
         .map_err(|e| DbError::Message(format!("Blink sign-in body: {e}")))?;
     let csrf = extract_csrf(&html).ok_or_else(|| {
         DbError::Message("Blink sign-in page did not include a CSRF token.".into())
@@ -288,9 +301,7 @@ fn start_oauth_session(
             pending,
             BlinkLoginResult {
                 status: "pin_required".into(),
-                detail: Some(
-                    "Blink sent a verification code to your phone or email.".into(),
-                ),
+                detail: Some("Blink sent a verification code to your phone or email.".into()),
             },
         ));
     }
@@ -343,9 +354,8 @@ fn finish_oauth(pending: &mut BlinkOauthPending) -> Result<(String, String, Opti
     .send()
     .map_err(|e| DbError::Message(format!("Blink code: {e}")))?;
     store_set_cookie(&mut pending.cookies, resp.headers());
-    let code = location_code(resp.headers()).ok_or_else(|| {
-        DbError::Message("Blink did not return an authorization code.".into())
-    })?;
+    let code = location_code(resp.headers())
+        .ok_or_else(|| DbError::Message("Blink did not return an authorization code.".into()))?;
 
     let token_resp = with_cookies(
         pending
@@ -370,8 +380,7 @@ fn finish_oauth(pending: &mut BlinkOauthPending) -> Result<(String, String, Opti
     if !token_resp.status().is_success() {
         return Err(DbError::Message("Blink token exchange failed.".into()));
     }
-    let body: Value = token_resp
-        .json()
+    let body: Value = copy_http_json(token_resp)
         .map_err(|e| DbError::Message(format!("Blink token json: {e}")))?;
     let access = body
         .get("access_token")
@@ -406,8 +415,8 @@ fn persist_tokens(
 
 fn refresh_access_token(conn: &Connection) -> Result<String, DbError> {
     let hardware = load_or_create_hardware_id(conn)?;
-    let refresh = load_refresh_token()?
-        .ok_or_else(|| DbError::Message("Blink is not connected.".into()))?;
+    let refresh =
+        load_refresh_token()?.ok_or_else(|| DbError::Message("Blink is not connected.".into()))?;
     let client = rest_client()?;
     let resp = client
         .post(OAUTH_TOKEN)
@@ -427,8 +436,7 @@ fn refresh_access_token(conn: &Connection) -> Result<String, DbError> {
             "Blink session expired — sign in again.".into(),
         ));
     }
-    let body: Value = resp
-        .json()
+    let body: Value = copy_http_json(resp)
         .map_err(|e| DbError::Message(format!("Blink refresh json: {e}")))?;
     let access = body
         .get("access_token")
@@ -439,7 +447,12 @@ fn refresh_access_token(conn: &Connection) -> Result<String, DbError> {
         store_refresh_token(new_refresh)?;
     }
     let expires_in = body.get("expires_in").and_then(|v| v.as_u64());
-    persist_tokens(conn, &access, &load_refresh_token()?.unwrap_or(refresh), expires_in)?;
+    persist_tokens(
+        conn,
+        &access,
+        &load_refresh_token()?.unwrap_or(refresh),
+        expires_in,
+    )?;
     Ok(access)
 }
 
@@ -465,7 +478,12 @@ fn ensure_tier(conn: &Connection, access: &str) -> Result<(String, String), DbEr
         get_setting(conn, SETTING_ACCOUNT)?,
     ) {
         if !tier.is_empty() && !account.is_empty() {
-            return Ok((tier, account));
+            if let (Ok(tier), Ok(account)) = (
+                validate_dns_label(&tier, "Blink region"),
+                validate_cache_file_stem(&account),
+            ) {
+                return Ok((tier, account));
+            }
         }
     }
     let client = rest_client()?;
@@ -478,14 +496,14 @@ fn ensure_tier(conn: &Connection, access: &str) -> Result<(String, String), DbEr
     if !resp.status().is_success() {
         return Err(DbError::Message("Could not load Blink region info.".into()));
     }
-    let body: Value = resp
-        .json()
+    let body: Value = copy_http_json(resp)
         .map_err(|e| DbError::Message(format!("Blink tier json: {e}")))?;
-    let tier = body
-        .get("tier")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| DbError::Message("Blink tier missing.".into()))?
-        .to_string();
+    let tier = validate_dns_label(
+        body.get("tier")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| DbError::Message("Blink tier missing.".into()))?,
+        "Blink region",
+    )?;
     let account = body
         .get("account_id")
         .map(|v| match v {
@@ -495,13 +513,15 @@ fn ensure_tier(conn: &Connection, access: &str) -> Result<(String, String), DbEr
         })
         .filter(|s| !s.is_empty())
         .ok_or_else(|| DbError::Message("Blink account id missing.".into()))?;
+    let account = validate_cache_file_stem(&account)?;
     set_setting(conn, SETTING_TIER, &tier)?;
     set_setting(conn, SETTING_ACCOUNT, &account)?;
     Ok((tier, account))
 }
 
-fn rest_base(tier: &str) -> String {
-    format!("https://rest-{tier}.immedia-semi.com")
+fn rest_base(tier: &str) -> Result<String, DbError> {
+    let tier = validate_dns_label(tier, "Blink region")?;
+    Ok(format!("https://rest-{tier}.immedia-semi.com"))
 }
 
 fn auth_headers(access: &str) -> HeaderMap {
@@ -515,13 +535,18 @@ fn auth_headers(access: &str) -> HeaderMap {
     headers
 }
 
-fn thumbnail_url(base: &str, raw: &str) -> String {
+fn thumbnail_url(base: &str, raw: &str) -> Option<String> {
     let mut path = raw.trim().to_string();
     if path.starts_with("http://") || path.starts_with("https://") {
         if !path.contains('.') {
             path.push_str(".jpg");
         }
-        return path;
+        return parse_public_https_url(&path)
+            .ok()
+            .map(|u| u.as_str().to_string());
+    }
+    if path.contains(['\n', '\r', '\0', ' ', '\\']) || path.contains("..") {
+        return None;
     }
     if !path.starts_with('/') {
         path = format!("/{path}");
@@ -529,15 +554,19 @@ fn thumbnail_url(base: &str, raw: &str) -> String {
     if !path.contains(".jpg") && !path.contains('?') {
         path.push_str(".jpg");
     }
-    format!("{base}{path}")
+    parse_public_https_url(&format!("{base}{path}"))
+        .ok()
+        .map(|u| u.as_str().to_string())
 }
 
 fn thumb_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("blink-thumbs")
 }
 
-fn thumb_path(data_dir: &Path, device_id: &str) -> PathBuf {
-    thumb_dir(data_dir).join(format!("{device_id}.jpg"))
+fn thumb_path(data_dir: &Path, device_id: &str) -> Result<PathBuf, DbError> {
+    let stem = validate_cache_file_stem(device_id)?;
+    // Re-check after appending `.jpg` (CVE-2026-90774 rustypaste class).
+    confined_dest(&thumb_dir(data_dir), &format!("{stem}.jpg"))
 }
 
 fn download_thumbnail(
@@ -546,6 +575,8 @@ fn download_thumbnail(
     url: &str,
     dest: &Path,
 ) -> Result<bool, DbError> {
+    let url = parse_public_https_url(url)?;
+    ensure_public_resolved_host(&url)?;
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -557,13 +588,15 @@ fn download_thumbnail(
     if !resp.status().is_success() {
         return Ok(false);
     }
-    let bytes = resp
-        .bytes()
+    let bytes = copy_http_body(resp)
         .map_err(|e| DbError::Message(format!("Blink thumbnail body: {e}")))?;
     if bytes.len() < 32 || bytes.len() > 2_000_000 {
         return Ok(false);
     }
     std::fs::write(dest, &bytes)?;
+    if let Some(parent) = dest.parent() {
+        confirm_confined_write(parent, dest)?;
+    }
     Ok(true)
 }
 
@@ -585,6 +618,9 @@ fn parse_devices(homescreen: &Value, base: &str) -> Vec<(HomeDevice, Option<Stri
                 .map(json_id)
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "unknown".into());
+            if validate_cache_file_stem(&id).is_err() {
+                continue;
+            }
             let name = cam
                 .get("name")
                 .and_then(|v| v.as_str())
@@ -605,7 +641,11 @@ fn parse_devices(homescreen: &Value, base: &str) -> Vec<(HomeDevice, Option<Stri
                 .get("signals")
                 .and_then(|s| s.get("temp"))
                 .and_then(|v| v.as_i64());
-            let network = cam.get("network_id").map(json_id).filter(|s| !s.is_empty());
+            let network = cam
+                .get("network_id")
+                .map(json_id)
+                .filter(|s| !s.is_empty())
+                .and_then(|n| validate_cache_file_stem(&n).ok());
             let mut detail_parts = Vec::new();
             if let Some(b) = battery {
                 detail_parts.push(format!("Battery {b}"));
@@ -626,7 +666,7 @@ fn parse_devices(homescreen: &Value, base: &str) -> Vec<(HomeDevice, Option<Stri
                 .get("thumbnail")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
-                .map(|s| thumbnail_url(base, s));
+                .and_then(|s| thumbnail_url(base, s));
             let device_id = format!("blink-{id}");
             out.push((
                 HomeDevice {
@@ -661,7 +701,7 @@ pub fn fetch_blink_cameras(
     }
     let access = current_access_token(conn)?;
     let (tier, account) = ensure_tier(conn, &access)?;
-    let base = rest_base(&tier);
+    let base = rest_base(&tier)?;
     let url = format!("{base}/api/v3/accounts/{account}/homescreen");
     let client = rest_client()?;
     let headers = auth_headers(&access);
@@ -675,14 +715,13 @@ pub fn fetch_blink_cameras(
             "Could not load Blink cameras. Try signing in again.".into(),
         ));
     }
-    let body: Value = resp
-        .json()
+    let body: Value = copy_http_json(resp)
         .map_err(|e| DbError::Message(format!("Blink homescreen json: {e}")))?;
     let parsed = parse_devices(&body, &base);
     let mut devices = Vec::new();
     for (mut device, thumb_url) in parsed {
         if let (Some(dir), Some(url)) = (data_dir, thumb_url) {
-            let dest = thumb_path(dir, &device.id);
+            let dest = thumb_path(dir, &device.id)?;
             if download_thumbnail(&client, &headers, &url, &dest).unwrap_or(false) {
                 device.thumbnail_available = true;
             } else if dest.is_file() {
@@ -704,7 +743,9 @@ pub fn blink_start_login(
     let email = email.trim().to_string();
     let password = password.trim().to_string();
     if email.is_empty() || password.is_empty() {
-        return Err(DbError::Message("Blink email and password are required.".into()));
+        return Err(DbError::Message(
+            "Blink email and password are required.".into(),
+        ));
     }
     let hardware = {
         let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
@@ -718,13 +759,17 @@ pub fn blink_start_login(
         let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
         persist_tokens(db.conn(), &access, &refresh, expires_in)?;
         let _ = ensure_tier(db.conn(), &access);
-        *pending.lock().map_err(|e| DbError::Message(e.to_string()))? = None;
+        *pending
+            .lock()
+            .map_err(|e| DbError::Message(e.to_string()))? = None;
         return Ok(BlinkLoginResult {
             status: "connected".into(),
             detail: Some("Blink is connected.".into()),
         });
     }
-    *pending.lock().map_err(|e| DbError::Message(e.to_string()))? = Some(session);
+    *pending
+        .lock()
+        .map_err(|e| DbError::Message(e.to_string()))? = Some(session);
     Ok(result)
 }
 
@@ -736,7 +781,9 @@ pub fn blink_verify_pin(
 ) -> Result<BlinkLoginResult, DbError> {
     let pin = pin.trim().to_string();
     if pin.len() < 4 {
-        return Err(DbError::Message("Enter the Blink verification code.".into()));
+        return Err(DbError::Message(
+            "Enter the Blink verification code.".into(),
+        ));
     }
     let mut session = pending
         .lock()
@@ -765,7 +812,9 @@ pub fn blink_verify_pin(
     store_set_cookie(&mut session.cookies, resp.headers());
     let status = resp.status().as_u16();
     if !(200..400).contains(&status) {
-        *pending.lock().map_err(|e| DbError::Message(e.to_string()))? = Some(session);
+        *pending
+            .lock()
+            .map_err(|e| DbError::Message(e.to_string()))? = Some(session);
         return Err(DbError::Message(
             "That Blink code was not accepted. Check the SMS/email and try again.".into(),
         ));
@@ -796,10 +845,7 @@ pub fn blink_disconnect(state: State<'_, DbState>) -> Result<(), DbError> {
 }
 
 #[tauri::command]
-pub fn home_device_image_base64(
-    app: AppHandle,
-    id: String,
-) -> Result<Option<String>, DbError> {
+pub fn home_device_image_base64(app: AppHandle, id: String) -> Result<Option<String>, DbError> {
     if !id.starts_with("blink-") {
         return Ok(None);
     }
@@ -807,7 +853,13 @@ pub fn home_device_image_base64(
         .path()
         .app_data_dir()
         .map_err(|e| DbError::Message(e.to_string()))?;
-    let path = thumb_path(&data_dir, &id);
+    let Ok(path) = thumb_path(&data_dir, &id) else {
+        return Ok(None);
+    };
+    let cache = thumb_dir(&data_dir);
+    if !path_is_within(&cache, &path) {
+        return Ok(None);
+    }
     if !path.is_file() {
         return Ok(None);
     }
@@ -826,7 +878,7 @@ pub fn blink_capture_snapshot(
         .path()
         .app_data_dir()
         .map_err(|e| DbError::Message(e.to_string()))?;
-    let camera_id = id.strip_prefix("blink-").unwrap_or(&id).to_string();
+    let camera_id = validate_cache_file_stem(id.strip_prefix("blink-").unwrap_or(&id))?;
     let (access, base, network) = {
         let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
         let access = current_access_token(db.conn())?;
@@ -837,7 +889,8 @@ pub fn blink_capture_snapshot(
             .find(|d| d.id == id)
             .and_then(|d| d.network_id.clone())
             .ok_or_else(|| DbError::Message("Camera network not found.".into()))?;
-        (access, rest_base(&tier), network)
+        let network = validate_cache_file_stem(&network)?;
+        (access, rest_base(&tier)?, network)
     };
     let client = rest_client()?;
     let headers = auth_headers(&access);
