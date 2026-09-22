@@ -2,7 +2,9 @@
 
 use crate::commands::open::open_with_system;
 use crate::db::{now_iso, DbError, DbState};
-use crate::security::public_http_client;
+use crate::security::{
+    copy_http_body, public_http_client, validate_youtube_channel_id, validate_youtube_watch_url,
+};
 use chrono::{DateTime, Utc};
 use feed_rs::parser;
 use rusqlite::{params, Connection};
@@ -114,7 +116,7 @@ pub fn upsert_youtube_pref(
     input: UpsertYoutubePrefInput,
 ) -> Result<YoutubePref, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
-    let channel_id = normalize_channel_id(&input.channel_id);
+    let channel_id = validate_youtube_channel_id(&normalize_channel_id(&input.channel_id))?;
     if channel_id.is_empty() {
         return Err(DbError::Message("channel_id is required".into()));
     }
@@ -161,7 +163,8 @@ fn upsert_video(
     published_at: Option<&str>,
     fetched_at: &str,
 ) -> Result<bool, DbError> {
-    let video_id = video_id_from_url(url).unwrap_or_else(|| url.to_string());
+    let url = validate_youtube_watch_url(url)?;
+    let video_id = video_id_from_url(&url).unwrap_or_else(|| url.clone());
     let changed = conn.execute(
         "INSERT INTO youtube_items (video_id, channel_id, channel_title, title, url, published_at, fetched_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -211,9 +214,18 @@ pub(crate) fn run_refresh_youtube(state: &DbState) -> Result<YoutubeRefreshResul
     let mut errors = Vec::new();
 
     for pref in &prefs {
-        let url = feed_url(&pref.channel_id);
-        match client.get(&url).send().and_then(|r| r.bytes()) {
-            Ok(bytes) => match parser::parse(bytes.as_ref()) {
+        let Ok(channel_id) = validate_youtube_channel_id(&pref.channel_id) else {
+            errors.push(format!("{}: invalid channel id", pref.channel_id));
+            continue;
+        };
+        let url = feed_url(&channel_id);
+        match client
+            .get(&url)
+            .send()
+            .map_err(|e| e.to_string())
+            .and_then(|resp| copy_http_body(resp).map_err(|e| e.to_string()))
+        {
+            Ok(bytes) => match parser::parse(bytes.as_slice()) {
                 Ok(feed) => {
                     let channel_title = feed
                         .title
@@ -230,6 +242,9 @@ pub(crate) fn run_refresh_youtube(state: &DbState) -> Result<YoutubeRefreshResul
                         if link.is_empty() {
                             continue;
                         }
+                        let Ok(link) = validate_youtube_watch_url(&link) else {
+                            continue;
+                        };
                         let title = entry
                             .title
                             .map(|t| t.content.trim().to_string())
@@ -240,7 +255,7 @@ pub(crate) fn run_refresh_youtube(state: &DbState) -> Result<YoutubeRefreshResul
                             .map(|d: DateTime<Utc>| d.to_rfc3339());
                         if upsert_video(
                             db.conn(),
-                            &pref.channel_id,
+                            &channel_id,
                             channel_title.as_deref(),
                             &title,
                             &link,
@@ -302,5 +317,6 @@ pub fn open_youtube_item(state: State<'_, DbState>, id: i64) -> Result<(), DbErr
         params![id],
         |row| row.get(0),
     )?;
+    let url = validate_youtube_watch_url(&url)?;
     open_with_system("url", &url)
 }
