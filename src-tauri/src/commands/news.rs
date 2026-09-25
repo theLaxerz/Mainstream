@@ -1,6 +1,9 @@
 use crate::commands::open::open_with_system;
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
-use crate::security::{public_http_client, validate_feed_url};
+use crate::security::{
+    copy_http_body, ensure_public_resolved_host, public_http_client, validate_feed_url,
+    validate_open_url, validate_stored_http_url,
+};
 use chrono::{DateTime, Utc};
 use feed_rs::parser;
 use rusqlite::{params, Connection};
@@ -245,6 +248,7 @@ pub fn open_news_item(state: State<'_, DbState>, id: i64) -> Result<(), DbError>
         params![id],
         |row| row.get(0),
     )?;
+    let url = validate_open_url(&url)?;
     open_with_system("url", &url)
 }
 
@@ -277,6 +281,9 @@ fn seed_feeds_if_empty(conn: &Connection) -> Result<usize, DbError> {
         if url.is_empty() {
             continue;
         }
+        let Ok(url) = validate_feed_url(url) else {
+            continue;
+        };
         conn.execute(
             "INSERT OR IGNORE INTO news_prefs (feed_url, title, weight, enabled, muted)
              VALUES (?1, ?2, ?3, 1, 0)",
@@ -320,14 +327,17 @@ fn fetch_feed(
     feed_url: &str,
 ) -> Result<Vec<ParsedEntry>, DbError> {
     let feed_url = validate_feed_url(feed_url)?;
-    let bytes = client
+    let parsed =
+        url::Url::parse(&feed_url).map_err(|_| crate::security::deny("invalid feed URL"))?;
+    ensure_public_resolved_host(&parsed)?;
+    let resp = client
         .get(&feed_url)
         .send()
         .and_then(|r| r.error_for_status())
-        .and_then(|r| r.bytes())
         .map_err(|e| DbError::Message(format!("fetch failed: {e}")))?;
+    let bytes = copy_http_body(resp)?;
 
-    let feed = parser::parse(bytes.as_ref())
+    let feed = parser::parse(bytes.as_slice())
         .map_err(|e| DbError::Message(format!("parse failed: {e}")))?;
 
     let mut out = Vec::new();
@@ -358,6 +368,9 @@ fn fetch_feed(
         if url.is_empty() {
             continue;
         }
+        let Ok(url) = validate_stored_http_url(&url) else {
+            continue;
+        };
 
         let summary = entry
             .summary
