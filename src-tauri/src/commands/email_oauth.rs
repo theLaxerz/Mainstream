@@ -231,9 +231,12 @@ fn id_token_aud_is_safe(value: &serde_json::Value) -> bool {
 /// Read the email claim from a compact JWT **after** rejecting unsigned
 /// tokens. Mnemosyne [CVE-2026-59163](https://github.com/advisories/GHSA-xcw4-53cc-hv32)
 /// decoded the payload and skipped HMAC verification, so `alg: none` and
-/// two-segment tokens impersonated any user. We still trust TLS + pinned
-/// token hosts rather than JWKS, but refuse unsigned / unpinned issuers
-/// and tokens whose `aud` is missing, `*`, or a URL.
+/// two-segment tokens impersonated any user. WSO2 [CVE-2026-5430](https://nvd.nist.gov/vuln/detail/CVE-2026-5430)
+/// (KEV, CWE-347) accepted tokens signed with unsupported algorithms;
+/// SigNoz [CVE-2026-97055](https://nvd.nist.gov/vuln/detail/CVE-2026-97055)
+/// signed sessions with an empty HMAC key. We still trust TLS + pinned
+/// token hosts rather than JWKS, but refuse unsigned / HMAC / unpinned
+/// issuers and tokens whose `aud` is missing, `*`, or a URL.
 pub fn email_from_id_token(id_token: &str) -> Option<String> {
     let mut parts = id_token.split('.');
     let header = parts.next()?;
@@ -744,6 +747,15 @@ mod tests {
             "sig"
         ))
         .is_none());
+        // WSO2 CVE-2026-5430 (CWE-347 / KEV): unsupported algorithms must fail
+        // closed — not "anything except none". SigNoz CVE-2026-97055 signed
+        // sessions with an empty HMAC key; we never accept HS* here.
+        assert!(email_from_id_token(&compact_jwt(r#"{"alg":"HS256"}"#, payload, "x")).is_none());
+        assert!(email_from_id_token(&compact_jwt(r#"{"alg":"HS384"}"#, payload, "x")).is_none());
+        assert!(email_from_id_token(&compact_jwt(r#"{"alg":"HS512"}"#, payload, "x")).is_none());
+        assert!(email_from_id_token(&compact_jwt(r#"{"alg":""}"#, payload, "x")).is_none());
+        assert!(email_from_id_token(&compact_jwt(r#"{"alg":"none "}"#, payload, "x")).is_none());
+        assert!(email_from_id_token(&compact_jwt(r#"{"alg":"RS256 "}"#, payload, "x")).is_none());
     }
 
     #[test]
@@ -758,12 +770,16 @@ mod tests {
     fn oauth_callback_rejects_empty_state() {
         // Hatchet CVE-2026-61687 / GHSA-phg3-3g28-wq9v: empty `?state=`
         // collided with a stored value that had been cleared to "".
+        // social-auth-core CVE-2026-57177 / Magento CVE-2026-71362 (KEV):
+        // a missing or swapped state must not bind the callback to another
+        // account (login CSRF / session switch).
         assert!(oauth_callback_state_matches("xyz", Some("xyz")));
         assert!(!oauth_callback_state_matches("xyz", Some("")));
         assert!(!oauth_callback_state_matches("xyz", None));
         assert!(!oauth_callback_state_matches("", Some("")));
         assert!(!oauth_callback_state_matches("", Some("xyz")));
         assert!(!oauth_callback_state_matches("xyz", Some("abc")));
+        assert!(!oauth_callback_state_matches("account-a", Some("account-b")));
         let req = "GET /?code=stolen&state= HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
         let params = parse_http_callback(req).unwrap();
         assert_eq!(params.get("state").map(String::as_str), Some(""));

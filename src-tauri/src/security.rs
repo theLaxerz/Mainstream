@@ -1402,6 +1402,7 @@ mod tests {
 
     #[test]
     fn feed_url_blocks_ssrf() {
+        // Contao CVE-2026-57232: RSS reader must not fetch an unvalidated URL.
         assert!(validate_feed_url("https://feeds.bbci.co.uk/rss.xml").is_ok());
         assert!(validate_feed_url("http://169.254.169.254/latest/meta-data").is_err());
         assert!(validate_feed_url("http://192.168.1.1/feed").is_err());
@@ -1515,6 +1516,18 @@ mod tests {
         assert!(!zip_entry_name_is_confined("export.xml;rm -rf /"));
         assert!(!zip_entry_name_is_confined("$(whoami)/export.xml"));
         assert!(!zip_entry_name_is_confined("export.xml|id"));
+        // WSO2 CVE-2026-5430 (KEV, CISA path-traversal title) / RUSTSEC-2026-0307
+        // (`uncbv` zip-slip): nested `../` plus an absolute webapps path must
+        // not leave the Health extract tree. We use `zip`, not `uncbv`.
+        assert!(!zip_entry_name_is_confined(
+            "../../repository/deployment/server/webapps/shell.jsp"
+        ));
+        assert!(!zip_entry_is_apple_health_export(Path::new(
+            "../../repository/deployment/server/webapps/export.xml"
+        )));
+        // zbateson/mail-mime-parser CVE-2026-61815: CR/LF in a filename
+        // must not split a later header or argv.
+        assert!(!zip_entry_name_is_confined("export.xml\r\nX-Injected: 1"));
         assert!(zip_entry_index_is_safe(0, 1));
         assert!(!zip_entry_index_is_safe(1, 1));
         assert_eq!(max_zip_entries_scanned(), MAX_ZIP_ENTRIES_SCANNED);
@@ -1807,6 +1820,9 @@ mod tests {
             "tauri-plugin-updater",
             // CVE-2026-95627 — dialog picker can recursively expand FS scope
             "tauri-plugin-dialog",
+            // RUSTSEC-2026-0307 — uncbv extract joins archive names with no
+            // `..` / absolute-path check (zip-slip; issued 24 Sep)
+            "uncbv",
         ] {
             let needle = format!("name = \"{dropper}\"");
             assert!(
@@ -1909,8 +1925,15 @@ mod tests {
             "frontend must not interpolate into HTML attributes: {attr_hits:?}"
         );
         // GHSA-xvpv-wq7p-548c (2026-09-18): npm preinstall exfil package.
+        // 24 Sep malware: webp-https-errors (GHSA-gmm9-q3gf-4hfr),
+        // xsjukcnv8low26 (GHSA-6g8g-gw7h-prch), building-build (MAL-2026-17164).
         let npm_lock = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../package-lock.json"));
-        for dropper in ["test890-auth"] {
+        for dropper in [
+            "test890-auth",
+            "webp-https-errors",
+            "xsjukcnv8low26",
+            "building-build",
+        ] {
             let needle = format!("\"{dropper}\"");
             assert!(
                 !npm_lock.contains(&needle),
@@ -1995,6 +2018,18 @@ mod tests {
         assert!(
             !conf.contains("withGlobalTauri") || conf.contains("\"withGlobalTauri\": false"),
             "withGlobalTauri must stay off"
+        );
+        // Cline CVE-2026-59723 / DBHub CVE-2026-61742: a localhost server
+        // that skips Host/Origin checks is DNS-rebinding / CSWSH. Vite
+        // `allowedHosts: true` disables the Host header allowlist.
+        let vite = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../vite.config.ts"));
+        assert!(
+            !vite.contains("allowedHosts: true") && !vite.contains("allowedHosts:true"),
+            "Vite allowedHosts must stay pinned, never true"
+        );
+        assert!(
+            vite.contains("allowedHosts") && vite.contains("\"localhost\""),
+            "Vite must pin localhost / loopback hosts"
         );
     }
 
