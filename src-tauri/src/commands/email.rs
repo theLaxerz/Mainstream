@@ -1,6 +1,9 @@
 use crate::commands::open::open_with_system;
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
-use crate::security::validate_imap_host;
+use crate::security::{
+    ensure_imap_host_resolves_safely, open_app_status, validate_imap_host, validate_imap_mailbox,
+    validate_imap_password, validate_imap_port, validate_imap_user, validate_open_url,
+};
 use imap::types::Fetch;
 use keyring::Entry;
 use mailparse::{addrparse, parse_mail, MailHeaderMap};
@@ -9,7 +12,6 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::process::Command;
 use tauri::{AppHandle, Manager, State};
 
 const KEYCHAIN_SERVICE: &str = "com.mainstream.lifeos.imap";
@@ -269,6 +271,10 @@ fn header_value(parsed: &mailparse::ParsedMail<'_>, name: &str) -> Option<String
 }
 
 fn parse_address_list(raw: &str) -> Vec<(Option<String>, String)> {
+    // CVE-2026-90776 Nodemailer class: quadratic RFC 5322 comment parsing.
+    if raw.len() > 4096 {
+        return Vec::new();
+    }
     let Ok(list) = addrparse(raw) else {
         return Vec::new();
     };
@@ -595,7 +601,7 @@ const EMAIL_SELECT: &str = "SELECT id, uid, mailbox, message_id, from_addr, from
      FROM emails";
 
 fn list_important(conn: &Connection, limit: Option<i64>) -> Result<Vec<EmailMessage>, DbError> {
-    let limit = limit.unwrap_or(10).max(1);
+    let limit = limit.unwrap_or(10).clamp(1, 200);
     let mut stmt = conn.prepare(&format!(
         "{EMAIL_SELECT}
          WHERE is_unread = 1 AND is_important = 1 AND is_junk = 0
@@ -616,7 +622,9 @@ fn fetch_header_bytes(fetch: &Fetch) -> Option<Vec<u8>> {
     fetch.body().map(|b| b.to_vec())
 }
 
-pub(crate) fn open_imap_session(conn: &Connection) -> Result<(ImapSession, EmailSettings), DbError> {
+pub(crate) fn open_imap_session(
+    conn: &Connection,
+) -> Result<(ImapSession, EmailSettings), DbError> {
     let settings = read_settings(conn)?;
     if settings.auth == "mailapp" {
         return Err(DbError::Message(
@@ -629,10 +637,13 @@ pub(crate) fn open_imap_session(conn: &Connection) -> Result<(ImapSession, Email
         ));
     }
 
+    let host = validate_imap_host(&settings.host)?;
+    ensure_imap_host_resolves_safely(&host)?;
+    let user = validate_imap_user(&settings.user)?;
     let mailbox = if settings.mailbox.trim().is_empty() {
         "INBOX".to_string()
     } else {
-        settings.mailbox.trim().to_string()
+        validate_imap_mailbox(settings.mailbox.trim())?
     };
     if is_junk_mailbox(&mailbox) {
         return Err(DbError::Message(
@@ -643,8 +654,12 @@ pub(crate) fn open_imap_session(conn: &Connection) -> Result<(ImapSession, Email
     let tls = TlsConnector::builder()
         .build()
         .map_err(|e| DbError::Message(format!("TLS init failed: {e}")))?;
-    let port = if settings.port == 0 { 993 } else { settings.port };
-    let client = imap::connect((settings.host.as_str(), port), settings.host.as_str(), &tls)
+    let port = validate_imap_port(if settings.port == 0 {
+        993
+    } else {
+        settings.port
+    })?;
+    let client = imap::connect((host.as_str(), port), host.as_str(), &tls)
         .map_err(|e| DbError::Message(format!("IMAP connect failed: {e}")))?;
 
     let session = if settings.auth == "oauth" || settings.has_oauth {
@@ -655,20 +670,21 @@ pub(crate) fn open_imap_session(conn: &Connection) -> Result<(ImapSession, Email
         };
         let token = crate::commands::email_oauth::ensure_access_token(conn, provider)?;
         let auth = crate::commands::email_oauth::XOAuth2 {
-            user: settings.user.clone(),
+            user: user.clone(),
             token,
         };
         client
             .authenticate("XOAUTH2", &auth)
             .map_err(|e| DbError::Message(format!("IMAP sign-in failed: {}", e.0)))?
     } else {
-        let password = load_password(&settings.user)?.ok_or_else(|| {
+        let password = load_password(&user)?.ok_or_else(|| {
             DbError::Message(
                 "IMAP password missing from Keychain — save it in Email settings.".into(),
             )
         })?;
+        let password = validate_imap_password(&password)?;
         client
-            .login(&settings.user, &password)
+            .login(&user, &password)
             .map_err(|e| DbError::Message(format!("IMAP login failed: {}", e.0)))?
     };
     Ok((session, settings))
@@ -680,7 +696,7 @@ pub(crate) fn sync_imap(conn: &Connection) -> Result<EmailSyncResult, DbError> {
     let mailbox = if settings.mailbox.trim().is_empty() {
         "INBOX".to_string()
     } else {
-        settings.mailbox.trim().to_string()
+        validate_imap_mailbox(settings.mailbox.trim())?
     };
 
     // Skip obvious junk folders if the configured mailbox is INBOX — we only sync the chosen mailbox.
@@ -740,7 +756,15 @@ pub(crate) fn sync_imap(conn: &Connection) -> Result<EmailSyncResult, DbError> {
                 }
                 let (is_important, score, is_junk) =
                     score_importance(&headers, &settings.user, &known, &mailbox);
-                upsert_email(conn, uid as i64, &mailbox, &headers, is_important, score, is_junk)?;
+                upsert_email(
+                    conn,
+                    uid as i64,
+                    &mailbox,
+                    &headers,
+                    is_important,
+                    score,
+                    is_junk,
+                )?;
                 fetched += 1;
                 if is_important {
                     important += 1;
@@ -796,38 +820,40 @@ pub fn save_email_settings(
 ) -> Result<EmailSettings, DbError> {
     let db = state.lock().map_err(|e| DbError::Message(e.to_string()))?;
     let host = validate_imap_host(input.host.trim())?;
-    let user = input.user.trim();
-    if host.is_empty() || user.is_empty() {
-        return Err(DbError::Message(
-            "IMAP host and username are required".into(),
-        ));
-    }
-    let port = input.port.unwrap_or(993);
+    let user = validate_imap_user(input.user.trim())?;
+    let port = validate_imap_port(input.port.unwrap_or(993))?;
     let mailbox = input
         .mailbox
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .unwrap_or("INBOX");
+        .map(validate_imap_mailbox)
+        .transpose()?
+        .unwrap_or_else(|| "INBOX".into());
 
     let previous_user = get_setting(db.conn(), SETTING_USER)?.unwrap_or_default();
 
     set_setting(db.conn(), SETTING_HOST, &host)?;
     set_setting(db.conn(), SETTING_PORT, &port.to_string())?;
-    set_setting(db.conn(), SETTING_USER, user)?;
-    set_setting(db.conn(), SETTING_MAILBOX, mailbox)?;
-    set_setting(db.conn(), SETTING_PROVIDER, &infer_provider_from_host(&host))?;
+    set_setting(db.conn(), SETTING_USER, &user)?;
+    set_setting(db.conn(), SETTING_MAILBOX, &mailbox)?;
+    set_setting(
+        db.conn(),
+        SETTING_PROVIDER,
+        &infer_provider_from_host(&host),
+    )?;
     set_setting(db.conn(), SETTING_AUTH, "password")?;
     set_setting(db.conn(), SETTING_MAILAPP_ACCOUNT, "")?;
 
     if let Some(password) = input.password.as_deref() {
         let password = password.trim();
         if !password.is_empty() {
+            let password = validate_imap_password(password)?;
             // If username changed, drop the old Keychain item.
             if !previous_user.is_empty() && previous_user != user {
                 let _ = delete_password(&previous_user);
             }
-            store_password(user, password)?;
+            store_password(&user, &password)?;
         }
     }
 
@@ -892,7 +918,9 @@ pub fn open_email(state: State<'_, DbState>, id: i64) -> Result<(), DbError> {
     let provider = get_setting(db.conn(), SETTING_PROVIDER)?.unwrap_or_default();
     drop(db);
 
-    let url = message_url.or_else(|| message_url_for(&message_id));
+    let url = message_url
+        .or_else(|| message_url_for(&message_id))
+        .and_then(|u| validate_open_url(&u).ok());
     if let Some(url) = url {
         // Prefer message:// so Mail.app jumps to the message when it has it indexed.
         match open_with_system("url", &url) {
@@ -909,9 +937,7 @@ pub fn open_email(state: State<'_, DbState>, id: i64) -> Result<(), DbError> {
     }
 
     // Fallback: just bring Mail.app forward.
-    let status = Command::new("open")
-        .args(["-a", "Mail"])
-        .status()
+    let status = open_app_status("-a", "Mail")
         .map_err(|e| DbError::Message(format!("failed to open Mail.app: {e}")))?;
     if status.success() {
         Ok(())
@@ -929,9 +955,15 @@ mod tests {
     #[test]
     fn infers_gmail_and_microsoft_hosts() {
         assert_eq!(infer_provider_from_host("imap.gmail.com"), "google");
-        assert_eq!(infer_provider_from_host("outlook.office365.com"), "microsoft");
+        assert_eq!(
+            infer_provider_from_host("outlook.office365.com"),
+            "microsoft"
+        );
         assert_eq!(infer_provider_from_host("imap.mail.me.com"), "imap");
-        assert_eq!(apply_provider_defaults("microsoft"), ("outlook.office365.com", 993));
+        assert_eq!(
+            apply_provider_defaults("microsoft"),
+            ("outlook.office365.com", 993)
+        );
         assert_eq!(apply_provider_defaults("google"), ("imap.gmail.com", 993));
     }
 
