@@ -7,8 +7,8 @@ use crate::commands::email::{
 use crate::db::{now_iso, DbError, DbState};
 use crate::security::{
     confined_dest, confirm_confined_write, copy_http_body, ensure_public_resolved_host,
-    is_inline_image_data_url, macos_system_command, max_http_response_bytes, parse_public_https_url,
-    path_is_within, public_http_client, MACOS_SWIFT,
+    image_bytes_are_jpeg_or_png, is_inline_image_data_url, macos_system_command,
+    max_http_response_bytes, parse_public_https_url, path_is_within, public_http_client, MACOS_SWIFT,
 };
 use mailparse::MailHeaderMap;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -248,6 +248,12 @@ fn run_vision_ocr(image_path: &Path, cache_dir: &Path) -> Option<String> {
     if !path_is_within(cache_dir, image_path) {
         return None;
     }
+    // CVE-2026-86950: CoreGraphics OOB write on a crafted file. Refuse
+    // anything that is not a JPEG/PNG before NSImage/Vision sees it.
+    let header = fs::read(image_path).ok()?;
+    if !image_bytes_are_jpeg_or_png(&header) {
+        return None;
+    }
     let script = ocr_script_path();
     if !script.exists() {
         return None;
@@ -282,8 +288,13 @@ fn write_image_cache(
     index: usize,
     bytes: &[u8],
 ) -> Result<PathBuf, DbError> {
+    if !image_bytes_are_jpeg_or_png(bytes) {
+        return Err(DbError::Message(
+            "mail image is not a JPEG or PNG".into(),
+        ));
+    }
     fs::create_dir_all(cache_dir)?;
-    let ext = if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+    let ext = if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
         "png"
     } else {
         "jpg"
@@ -725,7 +736,12 @@ pub fn physical_mail_image_base64(
     if bytes.is_empty() {
         return Ok(None);
     }
-    let mime = if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+    if !image_bytes_are_jpeg_or_png(&bytes) {
+        return Err(DbError::Message(
+            "mail image is not a JPEG or PNG".into(),
+        ));
+    }
+    let mime = if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
         "image/png"
     } else {
         "image/jpeg"
@@ -750,9 +766,14 @@ mod tests {
             "scan"
         ));
         assert!(resolve_image_bytes("data:text/html,image/png", &HashMap::new()).is_none());
+        assert!(resolve_image_bytes("data:image/jpeg/html,abc", &HashMap::new()).is_none());
         assert!(parse_img_tags(
             r#"<img src="data:text/html,<h1>image/png</h1>" alt="scan">"#
         )
         .is_empty());
+        assert!(crate::security::image_bytes_are_jpeg_or_png(&[
+            0xFF, 0xD8, 0xFF, 0xE0, 0x00
+        ]));
+        assert!(!crate::security::image_bytes_are_jpeg_or_png(b"%PDF-1.4"));
     }
 }
