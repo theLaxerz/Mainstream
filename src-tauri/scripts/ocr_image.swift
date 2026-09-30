@@ -2,13 +2,23 @@ import AppKit
 import Foundation
 import Vision
 
-guard CommandLine.arguments.count > 1 else {
-    fputs("usage: ocr_image.swift <image-path>\n", stderr)
+let args = CommandLine.arguments.dropFirst().filter { $0 != "--" }
+guard let path = args.first else {
+    fputs("usage: ocr_image.swift [--] <image-path>\n", stderr)
     exit(2)
 }
-
-let path = CommandLine.arguments[1]
 let url = URL(fileURLWithPath: path)
+
+// CVE-2026-86950 (CISA KEV 2026-09-29): CoreGraphics OOB write on crafted
+// files. Refuse anything that is not a JPEG SOI or PNG signature before
+// NSImage / Vision see the bytes.
+guard let handle = try? FileHandle(forReadingFrom: url) else { exit(0) }
+let prefix = handle.readData(ofLength: 8)
+try? handle.close()
+let jpegSOI = prefix.count >= 3 && prefix[0] == 0xFF && prefix[1] == 0xD8 && prefix[2] == 0xFF
+let pngSig: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+let png = prefix.count >= 8 && zip(prefix, pngSig).all { $0 == $1 }
+guard jpegSOI || png else { exit(0) }
 
 guard let image = NSImage(contentsOf: url),
       let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
