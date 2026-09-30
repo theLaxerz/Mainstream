@@ -176,8 +176,37 @@ fn url_decode(input: &str) -> String {
         .unwrap_or_else(|_| input.replace('+', " "))
 }
 
+fn jwt_part_is_canonical(part: &str) -> bool {
+    // PyJWT [CVE-2026-102269](https://github.com/advisories/GHSA-hxm8-2xgr-2p9m):
+    // non-canonical signature segments (padding / whitespace) bypassed
+    // raw-token revocation. Compact JWT parts are unpadded base64url.
+    !part.is_empty()
+        && !part.contains('=')
+        && part
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+fn json_value_nesting_is_safe(value: &serde_json::Value, depth: usize) -> bool {
+    // PyJWT [CVE-2026-102265](https://github.com/advisories/GHSA-8wjv-2p76-3863):
+    // a deeply nested header panicked `jwt.decode` with RecursionError.
+    const MAX_JWT_JSON_DEPTH: usize = 4;
+    if depth > MAX_JWT_JSON_DEPTH {
+        return false;
+    }
+    match value {
+        serde_json::Value::Array(items) => items
+            .iter()
+            .all(|item| json_value_nesting_is_safe(item, depth + 1)),
+        serde_json::Value::Object(map) => map
+            .values()
+            .all(|item| json_value_nesting_is_safe(item, depth + 1)),
+        _ => true,
+    }
+}
+
 fn jwt_part_json(part: &str) -> Option<serde_json::Value> {
-    if part.is_empty() {
+    if !jwt_part_is_canonical(part) {
         return None;
     }
     let padded = match part.len() % 4 {
@@ -188,7 +217,8 @@ fn jwt_part_json(part: &str) -> Option<serde_json::Value> {
         .decode(part)
         .or_else(|_| STANDARD.decode(padded.as_bytes()))
         .ok()?;
-    serde_json::from_slice(&decoded).ok()
+    let value: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+    json_value_nesting_is_safe(&value, 0).then_some(value)
 }
 
 fn id_token_alg_is_signed(alg: &str) -> bool {
@@ -260,6 +290,15 @@ fn json_email_is_verified(value: &serde_json::Value) -> bool {
 /// issuers and tokens whose `aud` is missing, `*`, or a URL, and emails
 /// the provider marked unverified ([CVE-2026-92161](https://github.com/advisories/GHSA-g7vj-c29h-3h5m)).
 pub fn email_from_id_token(id_token: &str) -> Option<String> {
+    // PyJWT [CVE-2026-102272](https://github.com/advisories/GHSA-r6x4-923q-g947):
+    // a UTF-8 BOM skipped the empty-HMAC / alg guard. Reject BOM and
+    // whitespace so the compact form cannot hide a second parser's view.
+    if id_token.starts_with('\u{feff}')
+        || id_token.as_bytes().starts_with(&[0xEF, 0xBB, 0xBF])
+        || id_token.chars().any(|c| c.is_whitespace())
+    {
+        return None;
+    }
     let mut parts = id_token.split('.');
     let header = parts.next()?;
     let payload = parts.next()?;
@@ -789,6 +828,18 @@ mod tests {
         assert!(email_from_id_token(&compact_jwt(r#"{"alg":""}"#, payload, "x")).is_none());
         assert!(email_from_id_token(&compact_jwt(r#"{"alg":"none "}"#, payload, "x")).is_none());
         assert!(email_from_id_token(&compact_jwt(r#"{"alg":"RS256 "}"#, payload, "x")).is_none());
+        // PyJWT CVE-2026-102272: a UTF-8 BOM skipped alg / HMAC guards.
+        let ok = compact_jwt(r#"{"alg":"RS256"}"#, payload, "sig");
+        assert!(email_from_id_token(&ok).is_some());
+        assert!(email_from_id_token(&format!("\u{feff}{ok}")).is_none());
+        assert!(email_from_id_token(&format!(" {ok}")).is_none());
+        // PyJWT CVE-2026-102265: deeply nested header JSON.
+        assert!(email_from_id_token(&compact_jwt(
+            r#"{"alg":"RS256","x":{"y":{"z":{"w":{"v":1}}}}}"#,
+            payload,
+            "sig"
+        ))
+        .is_none());
         // FriendsOfFlarum CVE-2026-92161 / Parse Server CVE-2026-101042:
         // unverified provider email is not proof of ownership (Discord
         // `verified: false` / nOAuth; code-based auth adapters).

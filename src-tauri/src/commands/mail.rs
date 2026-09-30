@@ -6,9 +6,9 @@ use crate::commands::email::{
 };
 use crate::db::{now_iso, DbError, DbState};
 use crate::security::{
-    confined_dest, confirm_confined_write, copy_http_body, ensure_public_resolved_host,
-    is_inline_image_data_url, macos_system_command, max_http_response_bytes, parse_public_https_url,
-    path_is_within, public_http_client, MACOS_SWIFT,
+    bytes_are_raster_image, confined_dest, confirm_confined_write, copy_http_body,
+    ensure_public_resolved_host, is_inline_image_data_url, macos_system_command,
+    max_http_response_bytes, parse_public_https_url, path_is_within, public_http_client, MACOS_SWIFT,
 };
 use mailparse::MailHeaderMap;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -235,7 +235,8 @@ fn resolve_image_bytes(src: &str, inline: &HashMap<String, Vec<u8>>) -> Option<V
     }
     if is_inline_image_data_url(src) {
         let comma = src.find(',')?;
-        return base64_decode(&src[comma + 1..]);
+        let bytes = base64_decode(&src[comma + 1..])?;
+        return bytes_are_raster_image(&bytes).then_some(bytes);
     }
     None
 }
@@ -282,8 +283,13 @@ fn write_image_cache(
     index: usize,
     bytes: &[u8],
 ) -> Result<PathBuf, DbError> {
+    if !bytes_are_raster_image(bytes) {
+        return Err(DbError::Message(
+            "mail scan is not a JPEG or PNG image".into(),
+        ));
+    }
     fs::create_dir_all(cache_dir)?;
-    let ext = if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+    let ext = if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
         "png"
     } else {
         "jpg"
@@ -722,10 +728,10 @@ pub fn physical_mail_image_base64(
         ));
     }
     let bytes = fs::read(&requested).map_err(DbError::Io)?;
-    if bytes.is_empty() {
+    if bytes.is_empty() || !bytes_are_raster_image(&bytes) {
         return Ok(None);
     }
-    let mime = if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+    let mime = if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
         "image/png"
     } else {
         "image/jpeg"
@@ -749,7 +755,11 @@ mod tests {
             "data:text/html,<svg>image/jpeg</svg>",
             "scan"
         ));
-        assert!(resolve_image_bytes("data:text/html,image/png", &HashMap::new()).is_none());
+        assert!(!is_mail_scan_image(
+            "data:image/jpeg/html;base64,abc",
+            "scan"
+        ));
+        assert!(resolve_image_bytes("data:image/jpeg;base64,AAAA", &HashMap::new()).is_none());
         assert!(parse_img_tags(
             r#"<img src="data:text/html,<h1>image/png</h1>" alt="scan">"#
         )
