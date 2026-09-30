@@ -8,9 +8,9 @@
 use crate::commands::home::HomeDevice;
 use crate::db::{get_setting, set_setting, DbError, DbState};
 use crate::security::{
-    authenticated_http_client, confined_dest, confirm_confined_write, copy_http_body,
-    copy_http_json, copy_http_text, ensure_public_resolved_host, parse_public_https_url,
-    path_is_within, validate_cache_file_stem, validate_dns_label,
+    authenticated_http_client, bytes_are_raster_image, confined_dest, confirm_confined_write,
+    copy_http_body, copy_http_json, copy_http_text, ensure_public_resolved_host,
+    parse_public_https_url, path_is_within, validate_cache_file_stem, validate_dns_label,
 };
 use base64::Engine;
 use keyring::Entry;
@@ -590,7 +590,7 @@ fn download_thumbnail(
     }
     let bytes = copy_http_body(resp)
         .map_err(|e| DbError::Message(format!("Blink thumbnail body: {e}")))?;
-    if bytes.len() < 32 || bytes.len() > 2_000_000 {
+    if bytes.len() < 32 || bytes.len() > 2_000_000 || !bytes_are_raster_image(&bytes) {
         return Ok(false);
     }
     std::fs::write(dest, &bytes)?;

@@ -139,6 +139,9 @@ fn ingest_export_xml<R: Read>(
             Ok(Event::DocType(_)) => {
                 return Err(deny("Health XML must not contain a DTD"));
             }
+            Ok(Event::PI(_)) => {
+                return Err(deny("Health XML must not contain processing instructions"));
+            }
             Ok(Event::Start(e)) => {
                 depth = depth.saturating_add(1);
                 if !xml_element_depth_is_safe(depth) {
