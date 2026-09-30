@@ -4,6 +4,24 @@ export type GroupedUnreadMessage = UnreadMessage & {
   unreadCount: number;
 };
 
+function groupedFrom(msg: UnreadMessage, unreadCount: number): GroupedUnreadMessage {
+  // Copy known fields only. scim-patch CVE-2026-61834 mutated inherited
+  // method objects via untrusted path segments; a generic property copy
+  // would reintroduce that class of bug.
+  return {
+    messageId: msg.messageId,
+    chatId: msg.chatId,
+    chatGuid: msg.chatGuid,
+    chatIdentifier: msg.chatIdentifier,
+    displayName: msg.displayName,
+    handle: msg.handle,
+    text: msg.text,
+    date: msg.date,
+    isGroup: msg.isGroup,
+    unreadCount,
+  };
+}
+
 /**
  * Collapse multiple unread rows from the same chat into one list item
  * (latest message + count) so the dashboard shows more distinct conversations.
@@ -18,14 +36,14 @@ export function groupUnreadByChat(messages: UnreadMessage[]): GroupedUnreadMessa
       String(msg.chatId);
     const existing = byChat.get(key);
     if (!existing) {
-      byChat.set(key, { ...msg, unreadCount: 1 });
+      byChat.set(key, groupedFrom(msg, 1));
       continue;
     }
     existing.unreadCount += 1;
     const existingTime = Date.parse(existing.date);
     const msgTime = Date.parse(msg.date);
     if (Number.isFinite(msgTime) && msgTime > existingTime) {
-      Object.assign(existing, msg);
+      byChat.set(key, groupedFrom(msg, existing.unreadCount));
     }
   }
 
