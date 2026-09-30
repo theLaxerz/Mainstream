@@ -105,7 +105,11 @@ fn contains_html_markup(s: &str) -> bool {
 /// names still must not carry shell metacharacters if a later caller
 /// interpolates them into AppleScript or a command string.
 fn contains_shell_metacharacters(s: &str) -> bool {
-    s.contains(['$', ';', '|', '&', '(', ')', '*', '?', '[', ']', '{', '}', '!'])
+    // shell-quote [CVE-2026-102422](https://nvd.nist.gov/vuln/detail/CVE-2026-102422):
+    // a `{ comment }` token is emitted as `#` and comments out the rest of
+    // the line, including later quoted arguments. We spawn argv, but zip /
+    // cache names and `open -a` targets must not carry a shell comment.
+    s.contains(['$', ';', '|', '&', '(', ')', '*', '?', '[', ']', '{', '}', '!', '#'])
 }
 
 /// code-ollama [GHSA-456v-xq2p-r4cj](https://github.com/advisories/GHSA-456v-xq2p-r4cj)
@@ -590,7 +594,40 @@ pub fn parse_public_http_url(raw: &str) -> Result<Url, DbError> {
     if host_is_blocked(host) {
         return Err(deny("URL host is not allowed"));
     }
+    ensure_http_authority_is_safe(raw, &url)?;
     Ok(url)
+}
+
+/// fast-uri [CVE-2026-84394](https://nvd.nist.gov/vuln/detail/CVE-2026-84394) /
+/// [CVE-2026-84292](https://nvd.nist.gov/vuln/detail/CVE-2026-84292): unmatched
+/// `[` / `]` in the authority and explicit port `0` desynchronized later
+/// parsers. ip-address [CVE-2026-101911](https://nvd.nist.gov/vuln/detail/CVE-2026-101911)
+/// built a diagnostic proportional to an unbounded host string (RFC 1035
+/// cap is 253). fast-uri [CVE-2026-86472](https://github.com/advisories/GHSA-hrr3-gc8f-f4qj)
+/// percent-decoded host octets and compared case after that, so `%45xample.com`
+/// and `example.com` were not the same host.
+fn ensure_http_authority_is_safe(raw: &str, url: &Url) -> Result<(), DbError> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| deny("URL is missing a host"))?;
+    if host.len() > 253 || host.contains('%') {
+        return Err(deny("URL host is not allowed"));
+    }
+    if url.port() == Some(0) {
+        return Err(deny("URL port is not allowed"));
+    }
+    let rest = raw
+        .trim()
+        .split_once("://")
+        .map(|(_, after)| after)
+        .unwrap_or("");
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let opens = authority.bytes().filter(|&b| b == b'[').count();
+    let closes = authority.bytes().filter(|&b| b == b']').count();
+    if opens != closes || opens > 1 || authority.contains('%') {
+        return Err(deny("URL host is not allowed"));
+    }
+    Ok(())
 }
 
 /// RSS / news feed URLs — same as public HTTP, plus no query-less `file:` tricks.
@@ -679,7 +716,20 @@ fn ensure_safe_mailto(raw: &str) -> Result<(), DbError> {
     }
     for (key, value) in url.query_pairs() {
         let key_l = key.to_ascii_lowercase();
-        if matches!(key_l.as_str(), "attach" | "attachment" | "attachments") {
+        // fast-uri [CVE-2026-86818](https://github.com/advisories/GHSA-jvvf-x445-j334):
+        // percent-encoded field names desynchronized header parsing (`%42cc`
+        // became Bcc). Decode once more and refuse attach / bcc / injected
+        // header names.
+        let key_decoded = percent_decode_once(&key_l);
+        if matches!(
+            key_l.as_str(),
+            "attach" | "attachment" | "attachments" | "bcc"
+        ) || matches!(
+            key_decoded.as_str(),
+            "attach" | "attachment" | "attachments" | "bcc"
+        ) || key_decoded.contains(':')
+            || key_decoded.contains(['\r', '\n'])
+        {
             return Err(deny("mailto must not attach local files"));
         }
         if nested_dangerous_scheme(&value) {
@@ -729,7 +779,28 @@ pub fn is_inline_image_data_url(src: &str) -> bool {
         return false;
     };
     let media = rest.split([';', ',']).next().unwrap_or("");
-    media.starts_with("image/") && media.len() > "image/".len()
+    // Axios [CVE-2026-101903](https://nvd.nist.gov/vuln/detail/CVE-2026-101903):
+    // an extra slash in the subtype (`image/jpeg/html`) still matched a
+    // prefix check. Require a single token after `image/`.
+    let Some(subtype) = media.strip_prefix("image/") else {
+        return false;
+    };
+    !subtype.is_empty()
+        && !subtype.contains('/')
+        && subtype
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'.' || b == b'-')
+}
+
+/// JPEG SOI (`FF D8 FF`) or the 8-byte PNG signature. Apple CoreGraphics
+/// [CVE-2026-86950](https://nvd.nist.gov/vuln/detail/CVE-2026-86950) (CISA KEV
+/// 2026-09-29) is an out-of-bounds write when processing a crafted file —
+/// exploited on iOS before 27. Informed Delivery OCR and Blink thumbs must
+/// not hand PDF / font / polyglot bytes to `NSImage` / Vision.
+pub fn bytes_are_raster_image(bytes: &[u8]) -> bool {
+    const JPEG_SOI: &[u8] = &[0xFF, 0xD8, 0xFF];
+    const PNG_SIGNATURE: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    bytes.starts_with(JPEG_SOI) || bytes.starts_with(PNG_SIGNATURE)
 }
 
 pub fn validate_app_target(raw: &str) -> Result<String, DbError> {
@@ -739,6 +810,7 @@ pub fn validate_app_target(raw: &str) -> Result<String, DbError> {
     }
     if contains_disallowed_controls(raw)
         || contains_shell_substitution(raw)
+        || contains_shell_metacharacters(raw)
         || raw.starts_with('-')
     {
         return Err(deny("app target contains invalid characters"));
@@ -915,7 +987,7 @@ pub fn validate_mailapp_account_name(raw: &str) -> Result<String, DbError> {
     // Reject quote/backslash even though we escape them — keeps the AppleScript
     // literal boring if a compromised webview supplies the account name.
     if contains_disallowed_controls(name)
-        || name.contains(['"', '\\'])
+        || name.contains(['"', '\\', '#'])
         || contains_shell_substitution(name)
     {
         return Err(deny("Mail account name contains invalid characters"));
@@ -1369,6 +1441,11 @@ pub fn zip_member_size_is_safe(uncompressed: u64, compressed: u64) -> bool {
         && uncompressed <= max_from_ratio
         && total >= uncompressed
         && uncompressed <= i32::MAX as u64
+        // adm-zip [GHSA-rcw4-f5rp-g42v](https://github.com/advisories/GHSA-rcw4-f5rp-g42v):
+        // declaring uncompressed size 0 skipped the bomb guard, then inflate
+        // allocated from the real stream. Empty members must not carry a
+        // large compressed payload.
+        && !(uncompressed == 0 && compressed > 1024)
 }
 
 /// Refuse zip members that are not regular files. CPython CVE-2026-82049
@@ -1377,12 +1454,19 @@ pub fn zip_member_size_is_safe(uncompressed: u64, compressed: u64) -> bool {
 pub fn zip_member_is_regular_file(is_symlink: bool, unix_mode: Option<u32>) -> bool {
     const S_IFMT: u32 = 0o170000;
     const S_IFREG: u32 = 0o100000;
+    const S_ISUID: u32 = 0o4000;
+    const S_ISGID: u32 = 0o2000;
     if is_symlink {
         return false;
     }
     match unix_mode {
         None => true,
         Some(mode) => {
+            // adm-zip [CVE-2026-102282](https://github.com/advisories/GHSA-j5f4-cc29-5x44):
+            // extraction preserved SUID/SGID bits from untrusted ZIPs.
+            if mode & (S_ISUID | S_ISGID) != 0 {
+                return false;
+            }
             let file_type = mode & S_IFMT;
             file_type == 0 || file_type == S_IFREG
         }
@@ -1409,6 +1493,15 @@ pub fn xml_payload_forbids_dtd(head: &[u8]) -> bool {
     let Ok(text) = std::str::from_utf8(head) else {
         return false;
     };
+    // Angular SSR [CVE-2026-88058](https://nvd.nist.gov/vuln/detail/CVE-2026-88058):
+    // a second processing instruction after the XML declaration was still
+    // executed. Apache XmlSchema [CVE-2026-102495](https://nvd.nist.gov/vuln/detail/CVE-2026-102495)
+    // / 102496 / 102497 nested `xs:import` / `xs:include` / `schemaLocation`
+    // until the stack overflowed.
+    let xml_decl_end = text.find("?>").map(|i| i + 2).unwrap_or(0);
+    if text[xml_decl_end..].contains("<?") {
+        return false;
+    }
     let upper = text.to_ascii_uppercase();
     !(upper.contains("<!DOCTYPE")
         || upper.contains("<!ENTITY")
@@ -1417,7 +1510,10 @@ pub fn xml_payload_forbids_dtd(head: &[u8]) -> bool {
         || upper.contains("<!NOTATION")
         || upper.contains("XINCLUDE")
         || upper.contains("XI:INCLUDE")
-        || upper.contains("HTTP://WWW.W3.ORG/2001/XINCLUDE"))
+        || upper.contains("HTTP://WWW.W3.ORG/2001/XINCLUDE")
+        || upper.contains("XS:IMPORT")
+        || upper.contains("XS:INCLUDE")
+        || upper.contains("SCHEMALOCATION"))
 }
 
 /// Neethi [CVE-2026-91863](https://nvd.nist.gov/vuln/detail/CVE-2026-91863)
@@ -1460,6 +1556,9 @@ mod tests {
         assert!(validate_open_url("mailto:?attach=/etc/passwd").is_err());
         assert!(validate_open_url("mailto:ada@example.com?attachment=file:///tmp/x").is_err());
         assert!(validate_open_url("mailto:ada@example.com?%61ttach=/tmp/secret").is_err());
+        // fast-uri CVE-2026-86818: percent-encoded Bcc / header names.
+        assert!(validate_open_url("mailto:ada@example.com?%42cc=evil@z").is_err());
+        assert!(validate_open_url("mailto:ada@example.com?bcc=evil@z").is_err());
         assert!(validate_open_url("mailto:ada@example.com?body=javascript:alert(1)").is_err());
         assert!(validate_open_url("mailto:javascript:alert(1)").is_err());
         // Canva CVE-2026-92839 class: one extra percent-decode must not revive a scheme.
@@ -1506,6 +1605,10 @@ mod tests {
         assert!(validate_app_target("Safari$(whoami)").is_err());
         assert!(validate_app_target("Safari`id`").is_err());
         assert!(validate_app_target("Safari${HOME}").is_err());
+        // shell-quote CVE-2026-102422: `#` comments out the rest of a shell line.
+        assert!(validate_app_target("Safari#whoami").is_err());
+        assert!(validate_mailapp_account_name("Gmail#cc").is_err());
+        assert!(validate_mailapp_account_name("Work (Outlook)").is_ok());
     }
 
     #[test]
@@ -1547,6 +1650,18 @@ mod tests {
         assert!(validate_feed_url("http://kubernetes.default/").is_err());
         assert!(validate_feed_url("http://kubernetes.default.svc/").is_err());
         assert!(validate_feed_url("http://host.docker.internal/").is_err());
+        // fast-uri CVE-2026-84394 / CVE-2026-84292: unmatched brackets / port 0.
+        assert!(validate_feed_url("https://example.com]/rss").is_err());
+        assert!(validate_feed_url("https://example.com:0/rss").is_err());
+        assert!(validate_open_url("https://example.com:0/").is_err());
+        // ip-address CVE-2026-101911: unbounded host diagnostic.
+        assert!(validate_feed_url(&format!("https://{}.example/rss", "a".repeat(250))).is_err());
+        // fast-uri CVE-2026-86472: percent-encoded host octets.
+        assert!(validate_feed_url("https://%45xample.com/rss").is_err());
+        // ip-address CVE-2026-101912: mixed-family compare — v4-mapped must
+        // still unwrap to the IPv4 deny list, not compare raw v6 bytes.
+        assert!(validate_feed_url("http://[::ffff:169.254.169.254]/").is_err());
+        assert!(validate_feed_url("http://[::ffff:8.8.8.8]/").is_ok());
         // AnyIO CVE-2026-63374: IDNA 2003 mapped ß→ss so TLS matched the
         // wrong certificate. `url` must emit IDNA 2008 punycode, not `strasse`.
         let idna = parse_public_http_url("https://straße.de/rss").unwrap();
@@ -1667,6 +1782,15 @@ mod tests {
         assert!(!zip_member_is_regular_file(false, Some(0o120777))); // symlink
         assert!(!zip_member_is_regular_file(false, Some(0o040755))); // directory
         assert!(!zip_member_is_regular_file(false, Some(0o010644))); // fifo
+        // adm-zip CVE-2026-102282: SUID/SGID bits must not survive extract.
+        assert!(!zip_member_is_regular_file(false, Some(0o104755)));
+        assert!(!zip_member_is_regular_file(false, Some(0o102644)));
+        // shell-quote CVE-2026-102422: `#` in zip / cache names.
+        assert!(!zip_entry_name_is_confined("export.xml#rm"));
+        assert!(confined_join(Path::new("/tmp/mainstream-cache"), "foo#bar.jpg").is_err());
+        // adm-zip GHSA-rcw4-f5rp-g42v: uncompressed 0 + large compressed.
+        assert!(!zip_member_size_is_safe(0, 100_000));
+        assert!(zip_member_size_is_safe(0, 0));
     }
 
     #[test]
@@ -1974,6 +2098,14 @@ mod tests {
             // RUSTSEC-2026-0312 — x509-validator ignores excluded iPAddress
             // name constraints with an all-zero mask (0.0.0.0/0, ::/0)
             "x509-validator",
+            // RUSTSEC-2026-0313 — wasmtime-wasi-http guest-driven host OOM
+            "wasmtime-wasi-http",
+            // RUSTSEC-2026-0314 — wasmtime-wasi filesystem datetime panic
+            "wasmtime-wasi",
+            // RUSTSEC-2026-0315 / 0316 — wasmtime fuel accounting / record lift
+            "wasmtime",
+            // CVE-2026-102342 / GHSA-m6mh-2hw2-555x — ammonia HTML XSS
+            "ammonia",
         ] {
             let needle = format!("name = \"{dropper}\"");
             assert!(
@@ -2035,6 +2167,25 @@ mod tests {
         assert!(!is_inline_image_data_url("data:text/html;base64,image/png"));
         assert!(!is_inline_image_data_url("data:image"));
         assert!(!is_inline_image_data_url("https://example.com/a.jpg"));
+        // Axios CVE-2026-101903: extra slash in the subtype is not an image.
+        assert!(!is_inline_image_data_url("data:image/jpeg/html;base64,abc"));
+        // CVE-2026-86950 (KEV): only JPEG SOI / PNG signature reach CoreGraphics.
+        assert!(bytes_are_raster_image(&[0xFF, 0xD8, 0xFF, 0xE0]));
+        assert!(bytes_are_raster_image(&[
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00
+        ]));
+        assert!(!bytes_are_raster_image(b"%PDF-1.7"));
+        assert!(!bytes_are_raster_image(b"\x00\x01\x00\x00"));
+        assert!(!bytes_are_raster_image(&[0xFF, 0xD8]));
+        assert!(!xml_payload_forbids_dtd(
+            br#"<?xml version="1.0"?><?xml-stylesheet type="text/xsl" href="evil.xsl"?><HealthData/>"#
+        ));
+        assert!(!xml_payload_forbids_dtd(
+            br#"<?xml version="1.0"?><HealthData xmlns:xs="http://www.w3.org/2001/XMLSchema"><xs:import schemaLocation="file:///etc/passwd"/></HealthData>"#
+        ));
+        assert!(!xml_payload_forbids_dtd(
+            br#"<?xml version="1.0"?><HealthData schemaLocation="http://evil.example/x.xsd"/>"#
+        ));
     }
 
     #[test]
@@ -2079,6 +2230,10 @@ mod tests {
                 "Object.assign",
                 "__proto__",
                 "constructor.prototype",
+                // Angular SSR CVE-2026-88058 / DOMSanitizer CVE-2026-100370:
+                // processing instructions and xlink:href survived sanitizers.
+                "createProcessingInstruction",
+                "xlink:href",
             ] {
                 if text.contains(needle) {
                     hits.push(format!("{}: {needle}", path.display()));
@@ -2128,6 +2283,15 @@ mod tests {
             // and code-ollama (GHSA-456v-xq2p-r4cj `$()` injection).
             "scim-patch",
             "code-ollama",
+            // 29 Sep: squeez (MAL-2026-13458 postinstall curl|sh).
+            "squeez",
+            // CVE-2026-101894: decompress symlink-chain zip-slip (not in tree).
+            "decompress",
+            "@xhmikosr/decompress",
+            // 30 Sep npm malware (baileys typosquats / droppers).
+            "levvleys",
+            "@xayz/baileys",
+            "shadowmd",
         ] {
             let needle = format!("\"{dropper}\"");
             assert!(
