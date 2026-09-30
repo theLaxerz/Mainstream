@@ -4,10 +4,10 @@
 //! prompt to this app (and Mainstream appears under Privacy → Calendars).
 
 use crate::commands::open::open_with_system;
+use crate::security::open_operand_status;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::ffi::{c_char, CStr};
-use std::process::Command;
 
 const APPLE_EPOCH_UNIX: i64 = 978_307_200;
 const CAL_OK: i32 = 0;
@@ -145,7 +145,7 @@ pub fn open_calendar_privacy_settings() -> Result<(), String> {
 
     let mut last_err = None;
     for url in urls {
-        match Command::new("open").arg(url).status() {
+        match open_operand_status(url) {
             Ok(status) if status.success() => return Ok(()),
             Ok(status) => {
                 last_err = Some(format!("open exited with status {status}"));
