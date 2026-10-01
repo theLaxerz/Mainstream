@@ -205,6 +205,15 @@ fn json_value_nesting_is_safe(value: &serde_json::Value, depth: usize) -> bool {
     }
 }
 
+fn jwt_payload_has_verify_override(value: &serde_json::Value) -> bool {
+    value.get("options").is_some()
+        || value.get("verify_exp").is_some()
+        || value.get("verify_nbf").is_some()
+        || value.get("verify_iss").is_some()
+        || value.get("verify_aud").is_some()
+        || value.get("verify_signature").is_some()
+}
+
 fn jwt_part_json(part: &str) -> Option<serde_json::Value> {
     if !jwt_part_is_canonical(part) {
         return None;
@@ -312,6 +321,13 @@ pub fn email_from_id_token(id_token: &str) -> Option<String> {
         return None;
     }
     let value = jwt_part_json(payload)?;
+    // PyJWT [CVE-2026-103001](https://github.com/advisories/GHSA-gvp8-978c-rx2q)
+    // mutated a caller-supplied `options` dict so a later `decode` skipped
+    // `verify_exp` / `verify_iss`. Claims are a local snapshot; a payload
+    // that smuggles those flags still cannot turn our checks off.
+    if jwt_payload_has_verify_override(&value) {
+        return None;
+    }
     let iss = value.get("iss")?.as_str()?;
     if !id_token_iss_is_pinned(iss) {
         return None;
@@ -870,6 +886,35 @@ mod tests {
             .as_deref(),
             Some("ada@gmail.com")
         );
+        // PyJWT CVE-2026-103001: payload-supplied verify flags must not
+        // disable iss / signature policy. Two sequential decodes stay stable.
+        let with_options = compact_jwt(
+            r#"{"alg":"RS256"}"#,
+            r#"{"iss":"https://accounts.google.com","aud":"481706.apps.googleusercontent.com","email":"ada@gmail.com","options":{"verify_iss":false,"verify_exp":false}}"#,
+            "sig",
+        );
+        assert!(email_from_id_token(&with_options).is_none());
+        assert!(email_from_id_token(&with_options).is_none());
+        assert!(email_from_id_token(&compact_jwt(
+            r#"{"alg":"RS256"}"#,
+            r#"{"iss":"https://evil.example","aud":"481706.apps.googleusercontent.com","email":"ada@gmail.com","verify_iss":false}"#,
+            "sig"
+        ))
+        .is_none());
+        // APISIX CVE-2026-94276: a token introspected for one issuer must
+        // not satisfy a route pinned to another.
+        assert!(email_from_id_token(&compact_jwt(
+            r#"{"alg":"RS256"}"#,
+            r#"{"iss":"https://login.microsoftonline.com/tid/v2.0","aud":"481706.apps.googleusercontent.com","email":"ada@gmail.com"}"#,
+            "sig"
+        ))
+        .is_some());
+        assert!(email_from_id_token(&compact_jwt(
+            r#"{"alg":"RS256"}"#,
+            r#"{"iss":"https://accounts.attacker.example","aud":"481706.apps.googleusercontent.com","email":"ada@gmail.com"}"#,
+            "sig"
+        ))
+        .is_none());
     }
 
     #[test]
