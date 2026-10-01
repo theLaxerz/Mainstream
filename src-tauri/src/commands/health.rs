@@ -2,10 +2,10 @@
 
 use crate::db::{get_setting, now_iso, set_setting, DbError, DbState};
 use crate::security::{
-    deny, max_health_export_bytes, reject_symlink_path, validate_health_export_path,
-    xml_element_depth_is_safe, xml_payload_forbids_dtd, zip_entry_index_is_safe,
-    zip_entry_is_apple_health_export, zip_entry_name_is_confined, zip_member_is_regular_file,
-    zip_member_size_is_safe,
+    deny, health_zip_magic_is_safe, max_health_export_bytes, reject_symlink_path,
+    validate_health_export_path, xml_element_depth_is_safe, xml_payload_forbids_dtd,
+    zip_entry_index_is_safe, zip_entry_is_apple_health_export, zip_entry_name_is_confined,
+    zip_member_is_regular_file, zip_member_size_is_safe,
 };
 use chrono::{DateTime, Local, NaiveDate};
 use quick_xml::events::Event;
@@ -13,7 +13,7 @@ use quick_xml::{Reader, XmlVersion};
 use rusqlite::params;
 use serde::Serialize;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use tauri::State;
 use zip::ZipArchive;
@@ -179,7 +179,15 @@ fn open_export_reader(path: &Path) -> Result<Box<dyn Read>, DbError> {
         .unwrap_or("")
         .to_ascii_lowercase();
     if lower == "zip" {
-        let file = File::open(path).map_err(DbError::Io)?;
+        let mut file = File::open(path).map_err(DbError::Io)?;
+        let mut magic = [0u8; 8];
+        let n = file.read(&mut magic).map_err(DbError::Io)?;
+        if !health_zip_magic_is_safe(&magic[..n]) {
+            return Err(DbError::Message(
+                "Health export.zip is not a ZIP archive".into(),
+            ));
+        }
+        file.seek(SeekFrom::Start(0)).map_err(DbError::Io)?;
         let mut archive =
             ZipArchive::new(file).map_err(|e| DbError::Message(format!("zip: {e}")))?;
         let len = archive.len();
