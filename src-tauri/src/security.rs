@@ -595,6 +595,7 @@ pub fn parse_public_http_url(raw: &str) -> Result<Url, DbError> {
         return Err(deny("URL host is not allowed"));
     }
     ensure_http_authority_is_safe(raw, &url)?;
+    ensure_http_path_is_canonical(raw, &url)?;
     Ok(url)
 }
 
@@ -626,6 +627,36 @@ fn ensure_http_authority_is_safe(raw: &str, url: &Url) -> Result<(), DbError> {
     let closes = authority.bytes().filter(|&b| b == b']').count();
     if opens != closes || opens > 1 || authority.contains('%') {
         return Err(deny("URL host is not allowed"));
+    }
+    Ok(())
+}
+
+/// Apache APISIX [CVE-2026-94269](https://nvd.nist.gov/vuln/detail/CVE-2026-94269)
+/// (CWE-647) and Cisco Catalyst SD-WAN [CVE-2026-76504](https://nvd.nist.gov/vuln/detail/CVE-2026-76504)
+/// (CISA KEV, CWE-177 hex/URI encoding) let a percent-encoded path reach a
+/// handler the decoded path was never meant to cover. fastify
+/// [CVE-2026-76169](https://github.com/advisories/GHSA-p68q-wchp-6fh7)
+/// similarly routed malformed URLs past auth into a not-found hook.
+/// Decode-equivalent `/` `.` `\` and leftover `..` must fail closed before
+/// RSS/`open`/image fetch.
+fn ensure_http_path_is_canonical(raw: &str, url: &Url) -> Result<(), DbError> {
+    let decoded = url.path();
+    if decoded.contains('\\')
+        || decoded
+            .split('/')
+            .any(|seg| seg == "." || seg == "..")
+    {
+        return Err(deny("URL path is not allowed"));
+    }
+    let rest = raw
+        .trim()
+        .split_once("://")
+        .map(|(_, after)| after)
+        .unwrap_or("");
+    let after_auth = rest.split_once('/').map(|(_, path)| path).unwrap_or("");
+    let raw_path = after_auth.split(['?', '#']).next().unwrap_or("");
+    if contains_encoded_path_escape(raw_path) || raw_path.contains("..") {
+        return Err(deny("URL path is not allowed"));
     }
     Ok(())
 }
@@ -801,6 +832,29 @@ pub fn bytes_are_raster_image(bytes: &[u8]) -> bool {
     const JPEG_SOI: &[u8] = &[0xFF, 0xD8, 0xFF];
     const PNG_SIGNATURE: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
     bytes.starts_with(JPEG_SOI) || bytes.starts_with(PNG_SIGNATURE)
+}
+
+/// ZIP local-file / empty EOCD / spanned signatures. sheets-diff
+/// [RUSTSEC-2026-0317](https://rustsec.org/advisories/RUSTSEC-2026-0317.html)
+/// handed caller bytes to `calamine::Xlsx::new` without this check; that
+/// path parses OLE/CFB first and a 512-byte header can request a
+/// multi-gigabyte `Vec`. Health `export.zip` must fail closed on anything
+/// that is not a ZIP before `ZipArchive::new`.
+pub fn bytes_are_zip_archive(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"PK\x03\x04")
+        || bytes.starts_with(b"PK\x05\x06")
+        || bytes.starts_with(b"PK\x07\x08")
+}
+
+/// Compound File Binary / OLE magic (`D0 CF 11 E0 …`). The unfixed
+/// calamine issue behind RUSTSEC-2026-0317 treats this as a password-
+/// protected workbook and allocates from the sector-count field.
+pub fn bytes_are_ole_cfb(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1])
+}
+
+pub fn health_zip_magic_is_safe(bytes: &[u8]) -> bool {
+    bytes_are_zip_archive(bytes) && !bytes_are_ole_cfb(bytes)
 }
 
 pub fn validate_app_target(raw: &str) -> Result<String, DbError> {
@@ -1658,6 +1712,14 @@ mod tests {
         assert!(validate_feed_url(&format!("https://{}.example/rss", "a".repeat(250))).is_err());
         // fast-uri CVE-2026-86472: percent-encoded host octets.
         assert!(validate_feed_url("https://%45xample.com/rss").is_err());
+        // APISIX CVE-2026-94269 / Cisco KEV CVE-2026-76504 / fastify
+        // CVE-2026-76169: encoded slash / `..` must not change the path
+        // a later policy sees.
+        assert!(validate_feed_url("https://example.com/foo%2fbar").is_err());
+        assert!(validate_feed_url("https://example.com/foo%2e%2e/secret").is_err());
+        assert!(validate_feed_url("https://example.com/foo/../secret").is_err());
+        assert!(validate_open_url("https://example.com/%2e%2e/%2e%2e/etc/passwd").is_err());
+        assert!(validate_feed_url("https://example.com/news/rss.xml").is_ok());
         // ip-address CVE-2026-101912: mixed-family compare — v4-mapped must
         // still unwrap to the IPv4 deny list, not compare raw v6 bytes.
         assert!(validate_feed_url("http://[::ffff:169.254.169.254]/").is_err());
@@ -2106,6 +2168,14 @@ mod tests {
             "wasmtime",
             // CVE-2026-102342 / GHSA-m6mh-2hw2-555x — ammonia HTML XSS
             "ammonia",
+            // RUSTSEC-2026-0317 — sheets-diff OLE/CFB sector-count alloc
+            // (issued 1 Oct; calamine Xlsx::new still unfixed)
+            "sheets-diff",
+            "calamine",
+            // CVE-2026-102820 / GHSA-g4mp-vgx3-xrvm — pageant MemoryMap OOB
+            "pageant",
+            // CVE-2026-102821 / GHSA-35g8-35p8-c8fw — russh CHANNEL_OPEN flood
+            "russh",
         ] {
             let needle = format!("name = \"{dropper}\"");
             assert!(
@@ -2139,6 +2209,14 @@ mod tests {
             lock.contains("name = \"idna_adapter\"\nversion = \"1.2.1\""),
             "Cargo.lock must pin idna_adapter 1.2.1 (edition 2021 / rustc 1.83)"
         );
+        // hashlink 0.12 is edition 2024 / MSRV 1.85 (rusqlite `cache` feature).
+        for patch in 0..=2 {
+            let stanza = format!("name = \"hashlink\"\nversion = \"0.12.{patch}\"");
+            assert!(
+                !lock.contains(&stanza),
+                "Cargo.lock must not pin hashlink 0.12.{patch} (edition 2024)"
+            );
+        }
     }
 
     #[test]
@@ -2177,6 +2255,14 @@ mod tests {
         assert!(!bytes_are_raster_image(b"%PDF-1.7"));
         assert!(!bytes_are_raster_image(b"\x00\x01\x00\x00"));
         assert!(!bytes_are_raster_image(&[0xFF, 0xD8]));
+        // RUSTSEC-2026-0317: ZIP magic only; OLE/CFB and PDF fail closed.
+        assert!(bytes_are_zip_archive(b"PK\x03\x04rest"));
+        assert!(health_zip_magic_is_safe(b"PK\x03\x04rest"));
+        assert!(!health_zip_magic_is_safe(&[
+            0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0x00
+        ]));
+        assert!(!bytes_are_zip_archive(b"%PDF-1.7"));
+        assert!(!bytes_are_zip_archive(&[0xFF, 0xD8, 0xFF]));
         assert!(!xml_payload_forbids_dtd(
             br#"<?xml version="1.0"?><?xml-stylesheet type="text/xsl" href="evil.xsl"?><HealthData/>"#
         ));
@@ -2292,6 +2378,10 @@ mod tests {
             "levvleys",
             "@xayz/baileys",
             "shadowmd",
+            // 30 Sep 23:xx reviewed: fastify malformed-URL auth bypass
+            // (CVE-2026-76169) and hono/jsx unescaped strings (CVE-2026-93981).
+            "fastify",
+            "hono",
         ] {
             let needle = format!("\"{dropper}\"");
             assert!(

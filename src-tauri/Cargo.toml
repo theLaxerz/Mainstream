@@ -20,7 +20,11 @@ cc = "1"
 tauri = { version = "2.11.6", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.40", features = ["bundled"] }
+# rusqlite 0.40 default-enables `cache`, which pulls hashlink 0.12.
+# hashlink 0.12.0+ sets edition 2024 / MSRV 1.85, so `cargo test --locked`
+# cannot even parse the crate on rustc 1.83. Statement-cache is LRU only;
+# bundled SQLite still works without it.
+rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
 url = "2"
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
@@ -55,3 +59,6 @@ time-macros = "=0.2.24"
 # 1.2.2 sets edition 2024 / MSRV 1.86. Stay on 1.2.1 so `cargo test` can
 # parse the lockfile on rustc 1.83 (same class as the time/zeroize pins).
 idna_adapter = "=1.2.1"
+# 0.1.10+ uses `unbounded_shr` (rustc 1.87). Stay on 0.1.9 so tests compile
+# on the 1.86 toolchain available in this environment.
+deflate64 = "=0.1.9"
