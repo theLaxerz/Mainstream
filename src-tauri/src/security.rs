@@ -5,6 +5,7 @@
 //! clients, and the filesystem.
 
 use crate::db::DbError;
+use std::ffi::CString;
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 use std::path::{Component, Path, PathBuf};
@@ -63,6 +64,21 @@ fn contains_disallowed_controls(s: &str) -> bool {
             '\0'..='\x1f' | '\u{7f}'..='\u{9f}' | '\u{2028}' | '\u{2029}'
         )
     })
+}
+
+/// Fortinet FortiMail [CVE-2026-104286](https://nvd.nist.gov/vuln/detail/CVE-2026-104286)
+/// (CISA KEV 2026-10-01, CWE-158 + CWE-22): a pathname that looks confined is
+/// truncated at an interior NUL when a C API opens it, so
+/// `export.xml\0../../tmp/shell` writes outside the intended directory.
+/// Rust `str` can contain `\0`; macOS `open` / Vision / zip C bindings cannot.
+fn reject_c_nul(s: &str) -> Result<(), DbError> {
+    CString::new(s)
+        .map(|_| ())
+        .map_err(|_| deny("path contains an interior NUL"))
+}
+
+fn path_has_interior_nul(path: &Path) -> bool {
+    path.as_os_str().as_encoded_bytes().contains(&0)
 }
 
 /// Percent-encoded C0 in any URL component, including userinfo.
@@ -1195,7 +1211,11 @@ pub fn validate_health_export_path(raw: &str) -> Result<(), DbError> {
     if contains_disallowed_controls(raw) || contains_encoded_path_escape(raw) {
         return Err(deny("Health export path contains invalid characters"));
     }
+    reject_c_nul(raw)?;
     let path = Path::new(raw);
+    if path_has_interior_nul(path) {
+        return Err(deny("Health export path contains invalid characters"));
+    }
     if path.components().any(|c| matches!(c, Component::ParentDir)) {
         return Err(deny("Health export path must not contain '..'"));
     }
@@ -1237,6 +1257,7 @@ pub fn confined_join(root: &Path, name: &str) -> Result<PathBuf, DbError> {
     {
         return Err(deny("file name contains invalid characters"));
     }
+    reject_c_nul(name)?;
     let name_path = Path::new(name);
     if name_path.is_absolute()
         || name_path
@@ -1250,6 +1271,7 @@ pub fn confined_join(root: &Path, name: &str) -> Result<PathBuf, DbError> {
     // Re-validate the composed path — do not trust the pre-join stem check.
     if candidate.file_name().and_then(|n| n.to_str()) != Some(name)
         || candidate.parent() != Some(root)
+        || path_has_interior_nul(&candidate)
     {
         return Err(deny("composed path escaped its directory"));
     }
@@ -1438,7 +1460,7 @@ pub fn zip_entry_is_apple_health_export(enclosed: &Path) -> bool {
         return false;
     }
     let raw = enclosed.to_string_lossy();
-    if contains_encoded_path_escape(&raw) {
+    if contains_encoded_path_escape(&raw) || contains_disallowed_controls(&raw) {
         return false;
     }
     if enclosed
@@ -1465,6 +1487,7 @@ pub fn zip_entry_name_is_confined(name: &str) -> bool {
         && !contains_encoded_path_escape(name)
         && !contains_html_markup(name)
         && !contains_shell_metacharacters(name)
+        && reject_c_nul(name).is_ok()
         && !name.contains("..")
         && !name.starts_with('/')
         && !name.starts_with('\\')
@@ -1753,6 +1776,10 @@ mod tests {
         assert!(validate_health_export_path("/Users/me/%252e%252e/export.xml").is_err());
         assert!(validate_health_export_path("/Users/me/export.xml%00.bak").is_err());
         assert!(validate_health_export_path("/Users/me/export\\..\\secret.xml").is_err());
+        // FortiMail CVE-2026-104286 (KEV, CWE-158): interior NUL must not
+        // truncate a Health path before the C zip/XML open.
+        assert!(validate_health_export_path("/Users/me/export.xml\0.bak").is_err());
+        assert!(std::ffi::CString::new("/Users/me/export.xml\0.bak").is_err());
     }
 
     #[test]
@@ -1794,6 +1821,12 @@ mod tests {
         assert!(!zip_entry_name_is_confined("%2e%2e/export.xml"));
         assert!(!zip_entry_name_is_confined("%252e%252e/export.xml"));
         assert!(!zip_entry_name_is_confined("export.xml%00"));
+        // FortiMail CVE-2026-104286: `export.xml\0.jpg` looks like export.xml
+        // to fopen/zip C APIs after NUL truncation.
+        assert!(!zip_entry_name_is_confined("export.xml\0.jpg"));
+        assert!(!zip_entry_is_apple_health_export(Path::new(
+            "apple_health_export/export.xml\0"
+        )));
         // CVE-2026-90780 class: oversized zip header names.
         assert!(!zip_entry_name_is_confined(&format!(
             "{}/export.xml",
@@ -1865,6 +1898,12 @@ mod tests {
         );
         assert!(confined_join(root, "../etc/passwd").is_err());
         assert!(confined_join(root, "/etc/passwd").is_err());
+        // SiYuan CVE-2026-73605: getUniqueFilename passed a client path to
+        // the host FS as an existence oracle. Absolute / parent names fail
+        // closed here without probing.
+        assert!(confined_join(root, "export.xml\0.jpg").is_err());
+        // FortiMail CVE-2026-104286: composed dest must not carry a C NUL.
+        assert!(path_has_interior_nul(Path::new("ok.jpg\0x")));
         assert!(confined_join(root, "foo/bar.jpg").is_err());
         assert!(confined_join(root, "foo.jpg/").is_err());
         assert!(confined_join(root, "foo.jpg\u{9b}").is_err());
@@ -2176,6 +2215,9 @@ mod tests {
             "pageant",
             // CVE-2026-102821 / GHSA-35g8-35p8-c8fw — russh CHANNEL_OPEN flood
             "russh",
+            // RUSTSEC-2026-0318 — matrix-sdk-crypto IdentityBasedStrategy panic
+            // when the recipient has no cross-signing keys (issued 1 Oct)
+            "matrix-sdk-crypto",
         ] {
             let needle = format!("name = \"{dropper}\"");
             assert!(
@@ -2320,6 +2362,9 @@ mod tests {
                 // processing instructions and xlink:href survived sanitizers.
                 "createProcessingInstruction",
                 "xlink:href",
+                // devalue CVE-2026-92708 / GHSA-4q55-j62x-fr9h: uneval/stringify
+                // of shared memory and coerced __proto__ keys.
+                "uneval(",
             ] {
                 if text.contains(needle) {
                     hits.push(format!("{}: {needle}", path.display()));
@@ -2382,6 +2427,22 @@ mod tests {
             // (CVE-2026-76169) and hono/jsx unescaped strings (CVE-2026-93981).
             "fastify",
             "hono",
+            // 1 Oct reviewed: vm2 sandbox-escape series (CVE-2026-92938
+            // node:sqlite native load, plus 92935–92958), devalue uneval,
+            // piscina ThreadPool.options prototype pollution, basic-ftp
+            // ReDoS, TanStack Start reflected XSS (CVE-2026-102989).
+            "vm2",
+            "devalue",
+            "piscina",
+            "basic-ftp",
+            "@tanstack/start-server-core",
+            "@tanstack/react-start",
+            // 2 Oct npm malware (GHSA, none in tree).
+            "ai-workshop-radio-app",
+            "okra-cloud-cdk",
+            "@bluewin/utils",
+            "figma-to-apl",
+            "rubbydev-crash-baileys",
         ] {
             let needle = format!("\"{dropper}\"");
             assert!(
