@@ -1,6 +1,7 @@
 use crate::db::DbError;
-use crate::security::{validate_app_target, validate_open_url};
-use std::process::Command;
+use crate::security::{
+    open_app_status, open_operand_status, validate_app_target, validate_open_url,
+};
 
 /// Open a URL or macOS app path/bundle via the system `open` command.
 #[tauri::command]
@@ -17,18 +18,18 @@ pub fn open_with_system(kind: &str, target: &str) -> Result<(), DbError> {
     let status = match kind {
         "url" => {
             let target = validate_open_url(target)?;
-            Command::new("open").arg(target).status()
+            open_operand_status(&target)
         }
         "app" => {
             let target = validate_app_target(target)?;
             // Prefer opening by path; fall back to -a / -b for names and bundle IDs.
             if target.ends_with(".app") || target.starts_with('/') {
-                Command::new("open").arg(&target).status()
+                open_operand_status(&target)
             } else if target.contains('.') && !target.contains(' ') {
                 // Likely a bundle identifier, e.g. com.apple.Safari
-                Command::new("open").args(["-b", &target]).status()
+                open_app_status("-b", &target)
             } else {
-                Command::new("open").args(["-a", &target]).status()
+                open_app_status("-a", &target)
             }
         }
         _ => return Err(DbError::Message("kind must be 'url' or 'app'".into())),

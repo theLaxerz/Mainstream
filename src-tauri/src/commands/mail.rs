@@ -6,7 +6,9 @@ use crate::commands::email::{
 };
 use crate::db::{now_iso, DbError, DbState};
 use crate::security::{
-    max_http_response_bytes, parse_public_https_url, path_is_within, public_http_client,
+    bytes_are_raster_image, confined_dest, confirm_confined_write, copy_http_body,
+    ensure_public_resolved_host, is_inline_image_data_url, macos_system_command,
+    max_http_response_bytes, parse_public_https_url, path_is_within, public_http_client, MACOS_SWIFT,
 };
 use mailparse::MailHeaderMap;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -14,7 +16,6 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use tauri::State;
 
 #[derive(Debug, Clone, Serialize)]
@@ -166,8 +167,11 @@ fn is_mail_scan_image(src: &str, alt: &str) -> bool {
     let src_l = src.to_ascii_lowercase();
     let alt_l = alt.to_ascii_lowercase();
 
-    if src_l.starts_with("data:") && src_l.contains("image/") {
+    if is_inline_image_data_url(src) {
         return alt_l.len() > 3;
+    }
+    if src_l.starts_with("data:") {
+        return false;
     }
 
     if src_l.contains("tracking") || src_l.contains("pixel") || src_l.contains("beacon") {
@@ -229,9 +233,10 @@ fn resolve_image_bytes(src: &str, inline: &HashMap<String, Vec<u8>>) -> Option<V
             .trim_matches(|c| c == '<' || c == '>');
         return inline.get(key).cloned();
     }
-    if src.starts_with("data:image/") {
+    if is_inline_image_data_url(src) {
         let comma = src.find(',')?;
-        return base64_decode(&src[comma + 1..]);
+        let bytes = base64_decode(&src[comma + 1..])?;
+        return bytes_are_raster_image(&bytes).then_some(bytes);
     }
     None
 }
@@ -240,13 +245,17 @@ fn ocr_script_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/ocr_image.swift")
 }
 
-fn run_vision_ocr(image_path: &Path) -> Option<String> {
+fn run_vision_ocr(image_path: &Path, cache_dir: &Path) -> Option<String> {
+    if !path_is_within(cache_dir, image_path) {
+        return None;
+    }
     let script = ocr_script_path();
     if !script.exists() {
         return None;
     }
-    let output = Command::new("swift")
+    let output = macos_system_command(MACOS_SWIFT)
         .arg(&script)
+        .arg("--")
         .arg(image_path)
         .output()
         .ok()?;
@@ -274,14 +283,20 @@ fn write_image_cache(
     index: usize,
     bytes: &[u8],
 ) -> Result<PathBuf, DbError> {
+    if !bytes_are_raster_image(bytes) {
+        return Err(DbError::Message(
+            "mail scan is not a JPEG or PNG image".into(),
+        ));
+    }
     fs::create_dir_all(cache_dir)?;
-    let ext = if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+    let ext = if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
         "png"
     } else {
         "jpg"
     };
-    let path = cache_dir.join(format!("{email_id}_{index}.{ext}"));
+    let path = confined_dest(cache_dir, &format!("{email_id}_{index}.{ext}"))?;
     fs::write(&path, bytes)?;
+    confirm_confined_write(cache_dir, &path)?;
     Ok(path)
 }
 
@@ -329,20 +344,17 @@ struct ParsedPiece {
 
 fn fetch_url_bytes(url: &str) -> Option<Vec<u8>> {
     let url = parse_public_https_url(url).ok()?;
+    ensure_public_resolved_host(&url).ok()?;
     let client = public_http_client(12, None).ok()?;
     let resp = client.get(url).send().ok()?;
     if !resp.status().is_success() {
         return None;
     }
-    let len = resp.content_length().unwrap_or(0);
-    if len > max_http_response_bytes() {
-        return None;
-    }
-    let bytes = resp.bytes().ok()?;
+    let bytes = copy_http_body(resp).ok()?;
     if bytes.len() < 1024 || bytes.len() as u64 > max_http_response_bytes() {
         return None;
     }
-    Some(bytes.to_vec())
+    Some(bytes)
 }
 
 fn extract_pieces_from_digest(
@@ -376,7 +388,7 @@ fn extract_pieces_from_digest(
         let vision_text = if let Some(ref b) = bytes {
             if let Ok(path) = write_image_cache(cache_dir, email_id, idx, b) {
                 image_path = Some(path.clone());
-                run_vision_ocr(&path)
+                run_vision_ocr(&path, cache_dir)
             } else {
                 None
             }
@@ -403,7 +415,7 @@ fn extract_pieces_from_digest(
     for (i, bytes) in orphan_images.into_iter().enumerate() {
         let idx = pieces.len() + i;
         if let Ok(path) = write_image_cache(cache_dir, email_id, idx, &bytes) {
-            let vision_text = run_vision_ocr(&path);
+            let vision_text = run_vision_ocr(&path, cache_dir);
             let had_vision = vision_text.as_ref().is_some_and(|t| !t.trim().is_empty());
             let ocr_text = merge_ocr("", vision_text.as_deref());
             if ocr_text.is_empty() {
@@ -567,15 +579,9 @@ fn sync_informed_delivery_mailapp(
             Ok(bytes) => bytes,
             Err(_) => continue,
         };
-        if let Some((n, ocr)) = ingest_digest(
-            conn,
-            &mailbox,
-            msg.id,
-            &raw,
-            user_email,
-            &known,
-            &cache_dir,
-        )? {
+        if let Some((n, ocr)) =
+            ingest_digest(conn, &mailbox, msg.id, &raw, user_email, &known, &cache_dir)?
+        {
             digests += 1;
             pieces_total += n;
             ocr_ran += ocr;
@@ -722,10 +728,10 @@ pub fn physical_mail_image_base64(
         ));
     }
     let bytes = fs::read(&requested).map_err(DbError::Io)?;
-    if bytes.is_empty() {
+    if bytes.is_empty() || !bytes_are_raster_image(&bytes) {
         return Ok(None);
     }
-    let mime = if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+    let mime = if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
         "image/png"
     } else {
         "image/jpeg"
@@ -733,4 +739,30 @@ pub fn physical_mail_image_base64(
     use base64::Engine;
     let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
     Ok(Some(format!("data:{mime};base64,{b64}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mail_scan_rejects_html_data_urls_that_mention_image() {
+        assert!(is_mail_scan_image(
+            "data:image/jpeg;base64,/9j/4AAQ",
+            "scan"
+        ));
+        assert!(!is_mail_scan_image(
+            "data:text/html,<svg>image/jpeg</svg>",
+            "scan"
+        ));
+        assert!(!is_mail_scan_image(
+            "data:image/jpeg/html;base64,abc",
+            "scan"
+        ));
+        assert!(resolve_image_bytes("data:image/jpeg;base64,AAAA", &HashMap::new()).is_none());
+        assert!(parse_img_tags(
+            r#"<img src="data:text/html,<h1>image/png</h1>" alt="scan">"#
+        )
+        .is_empty());
+    }
 }
