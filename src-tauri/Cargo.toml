@@ -62,3 +62,6 @@ idna_adapter = "=1.2.1"
 # 0.1.10+ uses `unbounded_shr` (rustc 1.87). Stay on 0.1.9 so tests compile
 # on the 1.86 toolchain available in this environment.
 deflate64 = "=0.1.9"
+# 2.14.0+ sets edition 2024 / MSRV 1.85. Stay on 2.13.1 so `cargo test --locked`
+# can parse the lockfile on rustc 1.83 (same class as the idna_adapter pin).
+indexmap = "=2.13.1"

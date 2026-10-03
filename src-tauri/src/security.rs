@@ -410,6 +410,10 @@ fn parse_obscured_ipv4(host: &str) -> Option<Ipv4Addr> {
 /// Call this immediately before an HTTP fetch of an untrusted URL (RSS, email
 /// images). Hostname allowlisting alone is not enough: a public-looking name
 /// can rebind to loopback or link-local between parse and connect.
+/// SiYuan [GHSA-x8gv-g2g3-65fj](https://github.com/advisories/GHSA-x8gv-g2g3-65fj)
+/// (`CheckHostSSRF`) resolved once, cached the allow, then connected later —
+/// DNS rebinding won the TOCTOU. We look up on every call; do not skip this
+/// because an earlier parse already passed.
 pub fn ensure_public_resolved_host(url: &Url) -> Result<(), DbError> {
     let host = url
         .host_str()
@@ -1492,6 +1496,18 @@ pub fn zip_entry_name_is_confined(name: &str) -> bool {
         && !name.starts_with('/')
         && !name.starts_with('\\')
         && !name.starts_with('~')
+        && !zip_name_has_windows_volume(name)
+}
+
+/// Dulwich [GHSA-8mcx-5rqc-vhmf](https://github.com/advisories/GHSA-8mcx-5rqc-vhmf)
+/// and uv [CVE-2026-104843](https://nvd.nist.gov/vuln/detail/CVE-2026-104843)
+/// wrote `C:\…` / drive-letter tree paths outside the extract root on Windows.
+/// Health extract is macOS-only, but zip names still fail closed.
+fn zip_name_has_windows_volume(name: &str) -> bool {
+    name.split(['/', '\\']).any(|seg| {
+        let b = seg.as_bytes();
+        b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
+    })
 }
 
 pub fn zip_entry_index_is_safe(index: usize, archive_len: usize) -> bool {
@@ -1617,6 +1633,7 @@ mod tests {
     #[test]
     fn open_url_blocks_dangerous_schemes() {
         assert!(validate_open_url("file:///etc/passwd").is_err());
+        // @a2ui/web_core CVE-2026-10032: agent-supplied openUrl ran javascript:.
         assert!(validate_open_url("javascript:alert(1)").is_err());
         assert!(validate_open_url("data:text/html,hi").is_err());
         assert!(validate_open_url("smb://fileserver/share").is_err());
@@ -1818,6 +1835,11 @@ mod tests {
         assert!(!zip_entry_name_is_confined("/tmp/ESCAPED.txt"));
         assert!(!zip_entry_name_is_confined("\\Windows\\ESCAPED.txt"));
         assert!(!zip_entry_name_is_confined("~/ESCAPED.txt"));
+        // Dulwich GHSA-8mcx-5rqc-vhmf / uv CVE-2026-104843: drive-letter
+        // members must not leave the extract root.
+        assert!(!zip_entry_name_is_confined("C:\\Windows\\ESCAPED.txt"));
+        assert!(!zip_entry_name_is_confined("C:/Windows/ESCAPED.txt"));
+        assert!(!zip_entry_name_is_confined("apple_health_export/D:export.xml"));
         assert!(!zip_entry_name_is_confined("%2e%2e/export.xml"));
         assert!(!zip_entry_name_is_confined("%252e%252e/export.xml"));
         assert!(!zip_entry_name_is_confined("export.xml%00"));
@@ -2218,6 +2240,15 @@ mod tests {
             // RUSTSEC-2026-0318 — matrix-sdk-crypto IdentityBasedStrategy panic
             // when the recipient has no cross-signing keys (issued 1 Oct)
             "matrix-sdk-crypto",
+            // RUSTSEC-2026-0319 — anymap2 unmaintained (issued 2 Oct)
+            "anymap2",
+            // RUSTSEC-2026-0320–0327 — wasmtime / wasmtime-wasi /
+            // wasmtime-wasi-http (already listed) plus praxis-proxy HTTP/2
+            // bomb and aws-smithy-json unbounded skip recursion
+            "praxis-proxy",
+            "aws-smithy-json",
+            // GHSA-6g2r-675j-hx59 — xxhash-rust short custom secret
+            "xxhash-rust",
         ] {
             let needle = format!("name = \"{dropper}\"");
             assert!(
@@ -2251,6 +2282,17 @@ mod tests {
             lock.contains("name = \"idna_adapter\"\nversion = \"1.2.1\""),
             "Cargo.lock must pin idna_adapter 1.2.1 (edition 2021 / rustc 1.83)"
         );
+        assert!(
+            lock.contains("name = \"indexmap\"\nversion = \"2.13.1\""),
+            "Cargo.lock must pin indexmap 2.13.1 (edition 2021 / rustc 1.83)"
+        );
+        for patch in 0..=2 {
+            let stanza = format!("name = \"indexmap\"\nversion = \"2.14.{patch}\"");
+            assert!(
+                !lock.contains(&stanza),
+                "Cargo.lock must not pin indexmap 2.14.{patch} (edition 2024)"
+            );
+        }
         // hashlink 0.12 is edition 2024 / MSRV 1.85 (rusqlite `cache` feature).
         for patch in 0..=2 {
             let stanza = format!("name = \"hashlink\"\nversion = \"0.12.{patch}\"");
@@ -2297,6 +2339,13 @@ mod tests {
         assert!(!bytes_are_raster_image(b"%PDF-1.7"));
         assert!(!bytes_are_raster_image(b"\x00\x01\x00\x00"));
         assert!(!bytes_are_raster_image(&[0xFF, 0xD8]));
+        // probe-image-size CVE-2026-104861: SVG parser was quadratic.
+        // Chrome 154 CVE-2026-103622 is a Chromium SVG UAF — WKWebView/JSC
+        // is not that engine, but OCR/thumbs still must not ingest SVG.
+        assert!(!bytes_are_raster_image(b"<svg xmlns=\"http://www.w3.org/2000/svg\">"));
+        assert!(!bytes_are_raster_image(
+            b"<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\"/>"
+        ));
         // RUSTSEC-2026-0317: ZIP magic only; OLE/CFB and PDF fail closed.
         assert!(bytes_are_zip_archive(b"PK\x03\x04rest"));
         assert!(health_zip_magic_is_safe(b"PK\x03\x04rest"));
@@ -2443,6 +2492,20 @@ mod tests {
             "@bluewin/utils",
             "figma-to-apl",
             "rubbydev-crash-baileys",
+            // 2 Oct reviewed: probe-image-size SVG quadratic DoS, busboy
+            // prototype-named multipart, a2ui javascript: openUrl, figlet
+            // width loop, Headroom CSWSH, TanStack-adjacent seroval, plus
+            // PhantomSub baileys forks published after yesterday's scan.
+            "probe-image-size",
+            "@fastify/busboy",
+            "@a2ui/web_core",
+            "figlet",
+            "headroom-ai",
+            "seroval",
+            "postcss-selector-parser",
+            "trigger.dev",
+            "@developmentyora/baileyss",
+            "luoxy-baileys",
         ] {
             let needle = format!("\"{dropper}\"");
             assert!(

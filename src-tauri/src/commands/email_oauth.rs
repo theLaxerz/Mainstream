@@ -41,7 +41,12 @@ const MICROSOFT_TOKEN: &str = "https://login.microsoftonline.com/common/oauth2/v
 const MICROSOFT_SCOPE: &str =
     "offline_access openid email profile https://outlook.office.com/IMAP.AccessAsUser.All";
 
+/// Zammad [CVE-2026-102490](https://nvd.nist.gov/vuln/detail/CVE-2026-102490)
+/// (CISA KEV 2026-10-02): extra privilege fields on a stored session were
+/// honored. Keychain JSON is a known-field snapshot — `admin` / `role` must
+/// not deserialize into the token we later send as XOAUTH2.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OAuthTokens {
     pub access_token: String,
     pub refresh_token: Option<String>,
@@ -151,6 +156,27 @@ pub fn oauth_callback_state_matches(expected: &str, received: Option<&str>) -> b
     let expected = expected.trim();
     let received = received.map(str::trim).unwrap_or("");
     !expected.is_empty() && !received.is_empty() && expected == received
+}
+
+/// Authorization-code grant only. Zammad [CVE-2026-102489](https://nvd.nist.gov/vuln/detail/CVE-2026-102489)
+/// (CISA KEV 2026-10-02, CWE-384) adopted a caller-supplied session id after
+/// login so the attacker reused that id. Implicit `access_token` / `id_token`
+/// and session cookies in the loopback query must not become the stored
+/// identity — PKCE exchanges `code` at the pinned token host.
+pub fn oauth_callback_is_authorization_code(params: &HashMap<String, String>) -> bool {
+    const FORBIDDEN: &[&str] = &[
+        "access_token",
+        "id_token",
+        "token",
+        "session",
+        "sid",
+        "session_id",
+        "sessionid",
+        "phpsessid",
+    ];
+    !params
+        .keys()
+        .any(|got| FORBIDDEN.iter().any(|k| got.eq_ignore_ascii_case(k)))
 }
 
 pub fn parse_query(query: &str) -> HashMap<String, String> {
@@ -375,6 +401,7 @@ fn wait_for_callback(listener: &TcpListener, expected_state: &str) -> Result<Str
                     expected_state,
                     params.get("state").map(String::as_str),
                 ) && params.get("code").is_some()
+                    && oauth_callback_is_authorization_code(&params)
                 {
                     html_page(
                         "Signed in",
@@ -408,6 +435,12 @@ fn wait_for_callback(listener: &TcpListener, expected_state: &str) -> Result<Str
                 ) {
                     return Err(DbError::Message(
                         "OAuth state mismatch — try signing in again.".into(),
+                    ));
+                }
+                if !oauth_callback_is_authorization_code(&params) {
+                    return Err(DbError::Message(
+                        "OAuth callback must be an authorization code, not a session or token."
+                            .into(),
                     ));
                 }
                 return params
@@ -968,5 +1001,51 @@ mod tests {
             "xyz",
             params.get("state").map(String::as_str)
         ));
+    }
+
+    #[test]
+    fn oauth_callback_rejects_fixed_session_and_implicit_tokens() {
+        // Zammad CVE-2026-102489 (KEV, CWE-384): a pre-set session id must
+        // not become the authenticated identity after the victim signs in.
+        let ok = parse_http_callback(
+            "GET /?code=abc&state=xyz HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+        )
+        .unwrap();
+        assert!(oauth_callback_is_authorization_code(&ok));
+        for query in [
+            "code=abc&state=xyz&session=attacker-fixed",
+            "code=abc&state=xyz&sid=1",
+            "code=abc&state=xyz&session_id=fixed",
+            "code=abc&state=xyz&PHPSESSID=fixed",
+            "code=abc&state=xyz&access_token=implicit",
+            "code=abc&state=xyz&id_token=implicit",
+            "code=abc&state=xyz&token=implicit",
+        ] {
+            let req = format!("GET /?{query} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+            let params = parse_http_callback(&req).unwrap();
+            assert!(
+                !oauth_callback_is_authorization_code(&params),
+                "must reject fixed session / implicit token in {query}"
+            );
+        }
+    }
+
+    #[test]
+    fn oauth_tokens_reject_privilege_fields() {
+        // Zammad CVE-2026-102490 (KEV): extra privilege fields on a stored
+        // session were honored. Keychain JSON is a known-field snapshot.
+        let clean = r#"{"access_token":"a","refresh_token":"r","expires_at":1}"#;
+        assert!(serde_json::from_str::<OAuthTokens>(clean).is_ok());
+        for poisoned in [
+            r#"{"access_token":"a","refresh_token":"r","expires_at":1,"admin":true}"#,
+            r#"{"access_token":"a","refresh_token":"r","expires_at":1,"role":"admin"}"#,
+            r#"{"access_token":"a","refresh_token":"r","expires_at":1,"is_admin":true}"#,
+            r#"{"access_token":"a","refresh_token":"r","expires_at":1,"privileges":["*"]}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<OAuthTokens>(poisoned).is_err(),
+                "must reject privilege field in {poisoned}"
+            );
+        }
     }
 }
